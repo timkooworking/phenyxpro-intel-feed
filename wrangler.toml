@@ -8,7 +8,7 @@ crons = ["0 1 * * *"] # 09:00 Asia/Shanghai every day
 [[d1_databases]]
 binding = "DB"
 database_name = "phenyxpro-intel-db"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "1a04941a-d633-4642-bc79-ff7244372c50"
 migrations_dir = "migrations"
 
 [vars]
