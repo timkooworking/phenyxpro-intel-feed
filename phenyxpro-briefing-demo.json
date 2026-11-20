@@ -1,0 +1,28 @@
+{
+  "generatedAt": "2026-11-20T09:00:00+08:00",
+  "mode": "DEMO",
+  "items": [
+    {
+      "date": "2026-11-20",
+      "category": "Worship Audio",
+      "priority": "High",
+      "title": "示例：教会音频市场观察（测试数据）",
+      "brand": "Worship Audio",
+      "summary": "这是一条用于测试插件连接的演示记录，不代表真实新闻或已核实的市场事件。",
+      "analysis": "连接成功后，正式数据会把已核实事实、市场推断和对 Phenyx Pro 的行动建议分开呈现。",
+      "source": "https://www.prosoundweb.com/",
+      "confidence": "Demo only"
+    },
+    {
+      "date": "2026-11-20",
+      "category": "Phenyx Pro Mentions",
+      "priority": "Medium",
+      "title": "示例：Phenyx Pro Reddit 提及监测（测试数据）",
+      "brand": "Phenyx Pro",
+      "summary": "这是一条演示记录。当前扩展不会自行搜索 Reddit；正式监测需要服务端采集器和获准的数据接口。",
+      "analysis": "正式记录应区分新帖子和旧帖子下的新回复，并提供原始链接、型号、情绪和问题分类。",
+      "source": "https://www.reddit.com/search/?q=%22Phenyx%20Pro%22",
+      "confidence": "Demo only"
+    }
+  ]
+}
