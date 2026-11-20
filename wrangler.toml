@@ -1,0 +1,17 @@
+name = "phenyxpro-intel-feed"
+main = "src/index.js"
+compatibility_date = "2026-11-20"
+
+[triggers]
+crons = ["0 1 * * *"] # 09:00 Asia/Shanghai every day
+
+[[d1_databases]]
+binding = "DB"
+database_name = "phenyxpro-intel-db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[vars]
+APP_NAME = "Phenyx Pro Market Intelligence"
+# Add RSS_FEEDS as a Worker secret or variable after deployment.
+# Format: one source per line: source name|feed URL|category
