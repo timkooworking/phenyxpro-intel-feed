@@ -15,3 +15,9 @@ migrations_dir = "migrations"
 APP_NAME = "Phenyx Pro Market Intelligence"
 # Add RSS_FEEDS as a Worker secret or variable after deployment.
 # Format: one source per line: source name|feed URL|category
+
+RSS_FEEDS = """
+Gearnews|https://www.gearnews.com/feed/|Brand & Product
+Mix Online|https://www.mixonline.com/feed|Media & Retail
+AVNation|https://www.avnation.tv/feed/|Media & Retail
+"""
