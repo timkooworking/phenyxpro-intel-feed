@@ -32,4 +32,18 @@ assert DB.execute("SELECT COUNT(*) FROM brand_watchlist WHERE status='active'").
 assert DB.execute("SELECT COUNT(*) FROM source_registry WHERE source_type='retailer' AND status='permission_required'").fetchone()[0] == 6
 assert DB.execute("SELECT status FROM source_registry WHERE source_name='Reddit'").fetchone()[0] == "pending_authorization"
 assert DB.execute("SELECT COUNT(*) FROM source_registry WHERE status='active' AND source_type IN ('media','brand_pr')").fetchone()[0] == 3
-print("V3.0 migration smoke test passed; existing article preserved.")
+DB.executescript((ROOT / "migrations" / "0006_media_expansion.sql").read_text(encoding="utf-8"))
+assert DB.execute("SELECT COUNT(*) FROM articles").fetchone()[0] == 1
+assert DB.execute("SELECT COUNT(*) FROM brand_watchlist WHERE status='active'").fetchone()[0] == 41
+assert DB.execute("SELECT COUNT(*) FROM source_registry WHERE source_type='retailer' AND status='permission_required'").fetchone()[0] == 6
+assert DB.execute("SELECT COUNT(*) FROM source_registry WHERE source_type IN ('media','brand_pr') AND status='active'").fetchone()[0] == 3
+assert DB.execute("SELECT feed_url FROM source_registry WHERE source_name='Guitar World'").fetchone()[0] == 'https://www.guitarworld.com/feeds.xml'
+assert DB.execute("SELECT status FROM source_registry WHERE source_name='MusicRadar'").fetchone()[0] == 'permission_required'
+assert DB.execute("SELECT status FROM source_registry WHERE source_name='Reddit'").fetchone()[0] == 'pending_authorization'
+assert DB.execute("SELECT COUNT(*) FROM source_registry").fetchone()[0] == 31
+DB.executescript((ROOT / "migrations" / "0007_media_activation.sql").read_text(encoding="utf-8"))
+assert DB.execute("SELECT COUNT(*) FROM source_feed_checks").fetchone()[0] == 0
+assert DB.execute("SELECT COUNT(*) FROM articles").fetchone()[0] == 1
+assert DB.execute("SELECT COUNT(*) FROM source_registry WHERE source_type IN ('media','brand_pr') AND status='active'").fetchone()[0] == 3
+assert DB.execute("SELECT status FROM source_registry WHERE source_name='Reddit'").fetchone()[0] == 'pending_authorization'
+print("V3.0.2 migration smoke test passed; existing data, brand list and permissions preserved.")
