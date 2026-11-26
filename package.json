@@ -1,6 +1,6 @@
 {
   "name": "phenyxpro-intel-feed",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "deploy": "wrangler deploy",
     "db:create": "wrangler d1 create phenyxpro-intel-db",
     "db:migrate:local": "wrangler d1 migrations apply phenyxpro-intel-db --local",
-    "db:migrate:remote": "wrangler d1 migrations apply phenyxpro-intel-db --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply phenyxpro-intel-db --remote",
+    "check": "node --check src/index.js && node tests/smoke.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
