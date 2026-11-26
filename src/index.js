@@ -22,5 +22,90 @@ function sources(env){return(env.RSS_FEEDS||"").split(/\r?\n/).map(x=>x.trim()).
 async function collect(src,env){const id=crypto.randomUUID(),start=new Date().toISOString();await env.DB.prepare("INSERT INTO source_runs (id,source_name,started_at,status) VALUES (?,?,?,?)").bind(id,src.name,start,"running").run();let seen=0,added=0;try{const r=await fetch(src.url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/2.1 RSS reader"}});if(!r.ok)throw Error(`Feed HTTP ${r.status}`);const items=parse(await r.text()).slice(0,40);seen=items.length;for(const item of items){const m=classify(item.title,item.description,src.name),a=await analyze(item,env,m.relevance);const pub=item.date?new Date(item.date).toISOString():start;const res=await env.DB.prepare(`INSERT OR IGNORE INTO articles (id,canonical_url,title,source_name,published_at,collected_at,category,priority,brand,summary,analysis,confidence,content_type,sentiment,is_phenyx_mention,relevance_score,market_pillar,product_family,model,evidence,analysis_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),item.url,item.title,src.name,pub,start,m.category,m.priority,m.brand,a.summary,a.analysis,a.confidence,m.type,a.sentiment,m.phenyx?1:0,m.relevance,m.pillar,m.prod,m.model,JSON.stringify(m.evidence),a.status).run();if(res.meta?.changes)added+=res.meta.changes;}await env.DB.prepare("UPDATE source_runs SET finished_at=?,status=?,items_seen=?,items_added=? WHERE id=?").bind(new Date().toISOString(),"success",seen,added,id).run();}catch(e){await env.DB.prepare("UPDATE source_runs SET finished_at=?,status=?,items_seen=?,items_added=?,error_message=? WHERE id=?").bind(new Date().toISOString(),"error",seen,added,String(e).slice(0,500),id).run();}return{source:src.name,seen,added};}
 async function runCollection(env){const ss=sources(env),results=[];for(const s of ss)results.push(await collect(s,env));return{ranAt:new Date().toISOString(),configuredSources:ss.length,results};}
 async function reclassify(env,limit=100){const n=Math.min(Math.max(Number(limit)||100,1),200),rows=await env.DB.prepare("SELECT id,title,summary,source_name FROM articles WHERE analysis_status='pending' ORDER BY collected_at DESC LIMIT ?").bind(n).all(),stmts=[],counts={processed:0,professionalAudio:0,worshipAudio:0,creatorAudio:0,adjacentIndustry:0,relevant35Plus:0,highPriority:0};for(const row of rows.results||[]){const m=classify(row.title,row.summary||"",row.source_name||"");stmts.push(env.DB.prepare("UPDATE articles SET category=?,priority=?,brand=?,content_type=?,is_phenyx_mention=?,relevance_score=?,market_pillar=?,product_family=?,model=?,evidence=?,analysis_status='rules_classified' WHERE id=?").bind(m.category,m.priority,m.brand,m.type,m.phenyx?1:0,m.relevance,m.pillar,m.prod,m.model,JSON.stringify(m.evidence),row.id));counts.processed++;if(m.pillar==="Professional Audio")counts.professionalAudio++;else if(m.pillar==="Worship Audio")counts.worshipAudio++;else if(m.pillar==="Creator Audio")counts.creatorAudio++;else counts.adjacentIndustry++;if(m.relevance>=35)counts.relevant35Plus++;if(m.priority==="High")counts.highPriority++;}if(stmts.length)await env.DB.batch(stmts);const remain=await env.DB.prepare("SELECT COUNT(*) AS count FROM articles WHERE analysis_status='pending'").first();return{reclassified:counts,remainingPending:remain?.count||0,note:"规则分类结果，不等同于深度 AI 分析。"};}
-async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:"2.1.0",time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){if(!auth(req,env))return j({error:"Unauthorized"},401);const raw=Number(u.searchParams.get("min_score")??35),min=Number.isFinite(raw)?Math.min(Math.max(raw,0),100):35,lim=Math.min(Math.max(Number(u.searchParams.get("limit")||100),1),300),r=await env.DB.prepare("SELECT id,title,source_name,published_at,category,priority,brand,summary,analysis,confidence,content_type,sentiment,is_phenyx_mention,canonical_url,relevance_score,market_pillar,product_family,model,evidence,analysis_status FROM articles WHERE relevance_score>=? ORDER BY relevance_score DESC,published_at DESC LIMIT ?").bind(min,lim).all();const items=(r.results||[]).map(x=>({date:x.published_at?.slice(0,10)||"",category:x.category,priority:x.priority,title:x.title,brand:x.brand||x.source_name||"",summary:x.summary||"",analysis:x.analysis||"",source:x.canonical_url,confidence:x.confidence||"Unreviewed",contentType:x.content_type,sentiment:x.sentiment,isPhenyxMention:!!x.is_phenyx_mention,relevanceScore:x.relevance_score,marketPillar:x.market_pillar,productFamily:x.product_family,model:x.model,evidence:x.evidence?JSON.parse(x.evidence):[],analysisStatus:x.analysis_status}));return j({generatedAt:new Date().toISOString(),mode:"LIVE",version:"2.1.0",minRelevanceScore:min,returned:items.length,items});}if(u.pathname==="/api/admin/run-collection"&&req.method==="POST"){if(!auth(req,env))return j({error:"Unauthorized"},401);return j(await runCollection(env));}if(u.pathname==="/api/admin/reclassify"&&req.method==="POST"){if(!auth(req,env))return j({error:"Unauthorized"},401);return j(await reclassify(env,u.searchParams.get("limit")||100));}if(u.pathname==="/api/admin/source-runs"&&req.method==="GET"){if(!auth(req,env))return j({error:"Unauthorized"},401);const r=await env.DB.prepare("SELECT * FROM source_runs ORDER BY started_at DESC LIMIT 100").all();return j({runs:r.results||[]});}if(u.pathname==="/api/admin/summary"&&req.method==="GET"){if(!auth(req,env))return j({error:"Unauthorized"},401);const r=await env.DB.prepare("SELECT market_pillar,category,COUNT(*) AS total,AVG(relevance_score) AS avg_relevance,SUM(CASE WHEN relevance_score>=35 THEN 1 ELSE 0 END) AS relevant FROM articles GROUP BY market_pillar,category ORDER BY total DESC").all();return j({summary:r.results||[]});}return j({error:"Not found"},404);}
-export default{fetch(req,env){return handle(req,env).catch(e=>j({error:"Internal server error",detail:String(e).slice(0,300)},500));},scheduled(_event,env,ctx){ctx.waitUntil(runCollection(env));}};
+
+const TRANSLATION_MODEL = '@cf/meta/m2m100-1.2b';
+async function translateText(text, env) {
+  const input=String(text||'').trim();
+  if(!input) return '';
+  const result=await env.AI.run(TRANSLATION_MODEL,{text:input.slice(0,1100),source_lang:'en',target_lang:'zh'});
+  const value=String(result?.translated_text||'').trim();
+  if(!value) throw Error('Workers AI 未返回 translated_text');
+  return value;
+}
+async function translatePending(env, requestedLimit=5, retryFailed=false) {
+  if(!env.AI) throw Error('Workers AI binding AI 未配置：请在 wrangler.toml 添加 [ai] binding = "AI"');
+  const limit=Math.min(Math.max(Number(requestedLimit)||5,1),10);
+  const rows=await env.DB.prepare(`
+    SELECT id,title,summary,translation_status FROM articles
+    WHERE translation_status='pending' OR (?=1 AND translation_status='error')
+    ORDER BY published_at DESC LIMIT ?
+  `).bind(retryFailed?1:0,limit).all();
+  let success=0,failed=0;
+  const errors=[];
+  for(const row of rows.results||[]) {
+    try {
+      const titleZh=await translateText(row.title,env);
+      const summarySource=(row.summary||'').trim();
+      const summaryZh=summarySource && summarySource !== (row.title||'').trim()
+        ? await translateText(summarySource,env)
+        : titleZh;
+      await env.DB.prepare(`
+        UPDATE articles
+        SET title_zh=?,summary_zh=?,translation_status='completed',translated_at=?,translation_error=NULL
+        WHERE id=?
+      `).bind(titleZh,summaryZh,new Date().toISOString(),row.id).run();
+      success++;
+    } catch(e) {
+      const message=String(e).slice(0,240);
+      failed++;
+      errors.push({id:row.id,error:message});
+      await env.DB.prepare(`
+        UPDATE articles SET translation_status='error', translation_error=? WHERE id=?
+      `).bind(message,row.id).run();
+    }
+  }
+  const pending=await env.DB.prepare(`
+    SELECT COUNT(*) AS count FROM articles WHERE translation_status='pending'
+  `).first();
+  const errorsTotal=await env.DB.prepare(`
+    SELECT COUNT(*) AS count FROM articles WHERE translation_status='error'
+  `).first();
+  return {processed:success+failed,translated:success,failed,remainingPending:pending?.count||0,
+    remainingErrors:errorsTotal?.count||0,errors:errors.slice(0,5),model:TRANSLATION_MODEL};
+}
+
+async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:"2.2.0",time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
+  if(!auth(req,env))return j({error:"Unauthorized"},401);
+  const raw=Number(u.searchParams.get('min_score')??0);
+  const min=Number.isFinite(raw)?Math.min(Math.max(raw,0),100):0;
+  const requested=Number(u.searchParams.get('limit')||100);
+  const limit=Number.isFinite(requested)?Math.min(Math.max(Math.floor(requested),1),200):100;
+  const requestedOffset=Number(u.searchParams.get('offset')||0);
+  const offset=Number.isFinite(requestedOffset)?Math.min(Math.max(Math.floor(requestedOffset),0),1000000):0;
+  const sort=u.searchParams.get('sort')==='score'?'score':'date';
+  const orderBy=sort==='score'?'relevance_score DESC,published_at DESC':'published_at DESC,collected_at DESC';
+  const r=await env.DB.prepare(`SELECT id,title,source_name,published_at,category,priority,brand,summary,analysis,confidence,content_type,sentiment,is_phenyx_mention,canonical_url,relevance_score,market_pillar,product_family,model,evidence,analysis_status,title_zh,summary_zh,translation_status
+    FROM articles WHERE relevance_score>=? ORDER BY ${orderBy} LIMIT ? OFFSET ?`).bind(min,limit,offset).all();
+  const counts=await env.DB.prepare('SELECT COUNT(*) AS total, SUM(CASE WHEN relevance_score>=? THEN 1 ELSE 0 END) AS matching FROM articles').bind(min).first();
+  const items=(r.results||[]).map(x=>({
+    date:x.published_at?.slice(0,10)||'',category:x.category,priority:x.priority,title:x.title,
+    titleZh:x.title_zh||'',summaryZh:x.summary_zh||'',translationStatus:x.translation_status||'pending',
+    brand:x.brand||x.source_name||'',summary:x.summary||'',analysis:x.analysis||'',source:x.canonical_url,
+    confidence:x.confidence||'Unreviewed',contentType:x.content_type,sentiment:x.sentiment,
+    isPhenyxMention:!!x.is_phenyx_mention,relevanceScore:x.relevance_score,
+    marketPillar:x.market_pillar,productFamily:x.product_family,model:x.model,
+    evidence:x.evidence?JSON.parse(x.evidence):[],analysisStatus:x.analysis_status
+  }));
+  const totalMatching=counts?.matching||0;
+  return j({generatedAt:new Date().toISOString(),mode:'LIVE',version:'2.2.0',minRelevanceScore:min,
+    totalArticles:counts?.total||0,totalMatching,returned:items.length,offset,limit,
+    hasMore:offset+items.length<totalMatching,nextOffset:offset+items.length,items});
+}
+if(u.pathname==='/api/admin/translate'&&req.method==='POST'){
+  if(!auth(req,env))return j({error:'Unauthorized'},401);
+  const limit=u.searchParams.get('limit')||5;
+  const retry=u.searchParams.get('retry_failed')==='1';
+  return j(await translatePending(env,limit,retry));
+}
+if(u.pathname==="/api/admin/run-collection"&&req.method==="POST"){if(!auth(req,env))return j({error:"Unauthorized"},401);return j(await runCollection(env));}if(u.pathname==="/api/admin/reclassify"&&req.method==="POST"){if(!auth(req,env))return j({error:"Unauthorized"},401);return j(await reclassify(env,u.searchParams.get("limit")||100));}if(u.pathname==="/api/admin/source-runs"&&req.method==="GET"){if(!auth(req,env))return j({error:"Unauthorized"},401);const r=await env.DB.prepare("SELECT * FROM source_runs ORDER BY started_at DESC LIMIT 100").all();return j({runs:r.results||[]});}if(u.pathname==="/api/admin/summary"&&req.method==="GET"){if(!auth(req,env))return j({error:"Unauthorized"},401);const r=await env.DB.prepare("SELECT market_pillar,category,COUNT(*) AS total,AVG(relevance_score) AS avg_relevance,SUM(CASE WHEN relevance_score>=35 THEN 1 ELSE 0 END) AS relevant FROM articles GROUP BY market_pillar,category ORDER BY total DESC").all();return j({summary:r.results||[]});}return j({error:"Not found"},404);}
+export default{fetch(req,env){return handle(req,env).catch(e=>j({error:"Internal server error",detail:String(e).slice(0,300)},500));},scheduled(_event,env,ctx){ctx.waitUntil((async()=>{await runCollection(env);if(env.AI){try{await translatePending(env,8);}catch(e){console.error("Scheduled translation error:",String(e).slice(0,200));}}})());}};
