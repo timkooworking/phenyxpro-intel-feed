@@ -160,14 +160,73 @@ async function recordCompetitorEvent(env,articleId,item,src,m,publishedAt,region
     .bind(crypto.randomUUID(),articleId,m.brand,m.competitorTier,eventType,m.prod||null,region,src.name,src.sourceType||"media",item.url,publishedAt,new Date().toISOString(),"Medium",String(item.title||"").slice(0,500),dedupe,new Date().toISOString()).run();
   return r.meta?.changes||0;
 }
+// Reject HTTP-200 HTML/errors masquerading as XML feeds. No content from a failed feed
+// is inserted into articles, and such a run cannot be counted as successful.
+function inspectFeedXml(xml){
+  if(!/<(?:rss|feed|rdf:rdf)\b/i.test(String(xml||'').slice(0,4096)))throw Error('Response is not RSS/Atom XML');
+  const declared=(String(xml).match(/<(?:item|entry)\b/gi)||[]).length;
+  const items=parse(xml);
+  if(declared>0&&items.length===0)throw Error('Feed contains items but none have a parsable title and link');
+  return{items,declared};
+}
+async function getFeedDocument(url){
+  const r=await fetch(url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/3.0.2 RSS reader", "Accept":"application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9"}});
+  if(!r.ok)throw Error(`Feed HTTP ${r.status}`);
+  const maxBytes=2*1024*1024;
+  if(Number(r.headers.get('content-length')||0)>maxBytes)throw Error('Feed exceeds 2 MiB safety limit');
+  const reader=r.body?.getReader();
+  if(!reader)throw Error('Feed response has no readable body');
+  const chunks=[];let total=0;
+  for(;;){const {done,value}=await reader.read();if(done)break;
+    total+=value.byteLength;
+    if(total>maxBytes){await reader.cancel();throw Error('Feed exceeds 2 MiB safety limit');}
+    chunks.push(value);
+  }
+  const bytes=new Uint8Array(total);let pos=0;
+  for(const chunk of chunks){bytes.set(chunk,pos);pos+=chunk.byteLength;}
+  return{httpStatus:r.status,...inspectFeedXml(new TextDecoder().decode(bytes))};
+}
+// The activation queue performs database-only checks; it does NOT crawl sites.
+async function mediaActivationQueue(env){
+  const monitor=await sourceMonitor(env);
+  const media=monitor.sources.filter(x=>['media','brand_pr'].includes(x.source_type));
+  const rows=media.map(x=>{
+    const eligible=x.collectorEligible;
+    const hasFeed=/^https:\/\//i.test(x.feed_url||'');
+    const hasEvidence=!!String(x.permission_reference||'').trim();
+    let stage,action;
+    if(eligible&&x.successfulRuns30Days>0){stage='collecting';action='Review article quality and brand matches';}
+    else if(eligible){stage='approved_awaiting_success';action='Run an authorized feed check then collect once';}
+    else if(!hasFeed){stage='feed_discovery';action='Request and verify the publisher feed or editorial distribution';}
+    else if(x.status==='permission_required'||x.permission_status==='review_required'||!hasEvidence){stage='permission_review';action='Obtain and record permission for enterprise internal metadata monitoring';}
+    else{stage='disabled';action='Review status and documented permission before activation';}
+    return{sourceId:x.id,sourceName:x.source_name,sourceType:x.source_type,feedUrl:x.feed_url||null,sourceStatus:x.status,permissionStatus:x.permission_status,hasPermissionReference:hasEvidence,stage,action,successfulRuns30Days:x.successfulRuns30Days,lastError:x.last_error||null};
+  });
+  return{version:'3.0.2',generatedAt:new Date().toISOString(),note:'Registration and Feed URL discovery do not constitute permission. No candidate URLs are automatically fetched.',summary:{mediaSources:rows.length,collecting:rows.filter(x=>x.stage==='collecting').length,awaitingPermission:rows.filter(x=>x.stage==='permission_review').length,awaitingFeed:rows.filter(x=>x.stage==='feed_discovery').length},sources:rows};
+}
+// Explicit operator-requested preflight for ACTIVE + authorized publisher feeds only.
+// Endpoint never fetches permission-required or pending candidates and does not ingest articles.
+async function checkAuthorizedFeed(env,id){
+  const source=await env.DB.prepare('SELECT id,source_name,source_type,feed_url,status,permission_status FROM source_registry WHERE id=?').bind(id).first();
+  if(!source)return{status:404,body:{error:'Source not found'}};
+  if(!['media','brand_pr'].includes(source.source_type)||source.status!=='active'||!AUTHORIZED_FEED_PERMISSIONS.has(source.permission_status))
+    return{status:403,body:{error:'Source is not authorized and active for automated RSS collection'}};
+  if(!/^https:\/\//i.test(source.feed_url||''))return{status:400,body:{error:'Source has no registered HTTPS feed URL'}};
+  const now=new Date().toISOString(),idCheck=crypto.randomUUID();
+  let httpStatus=null,parsedItems=0,ok=false,error=null;
+  try{const result=await getFeedDocument(source.feed_url);httpStatus=result.httpStatus;parsedItems=result.items.length;ok=true;}
+  catch(e){error=String(e?.message||e).slice(0,300);const match=error.match(/^Feed HTTP (\d{3})/);httpStatus=match?Number(match[1]):null;}
+  await env.DB.prepare('INSERT INTO source_feed_checks (id,source_id,source_name,checked_at,success,http_status,parsed_items,error_message) VALUES (?,?,?,?,?,?,?,?)').bind(idCheck,source.id,source.source_name,now,ok?1:0,httpStatus,parsedItems,error).run();
+  await env.DB.prepare('UPDATE source_registry SET last_checked_at=?,last_error=?,updated_at=? WHERE id=?').bind(now,error,now,source.id).run();
+  return{status:ok?200:502,body:{sourceName:source.source_name,checkedAt:now,ok,httpStatus,parsedItems,error,note:'Preflight only: no articles inserted; existing daily collection schedule remains unchanged.'}};
+}
 async function collect(src,env,brandRules){
   const id=crypto.randomUUID(),start=new Date().toISOString();
   await env.DB.prepare("INSERT INTO source_runs (id,source_name,started_at,status) VALUES (?,?,?,?)").bind(id,src.name,start,"running").run();
   let seen=0,added=0,events=0,candidates=0;
   try{
-    const r=await fetch(src.url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/3.0.1 RSS reader"}});
-    if(!r.ok)throw Error(`Feed HTTP ${r.status}`);
-    const items=parse(await r.text()).slice(0,40);seen=items.length;
+    const feed=await getFeedDocument(src.url);
+    const items=feed.items.slice(0,40);seen=items.length;
     for(const item of items){
       const m=classify(item.title,item.description,src.name,brandRules),a=await analyze(item,env,m.relevance);
       const pub=item.date&&!Number.isNaN(Date.parse(item.date))?new Date(item.date).toISOString():start;
@@ -222,7 +281,7 @@ async function adminV3Summary(env){
     env.DB.prepare("SELECT COUNT(*) AS count FROM source_discovery WHERE status='needs_review'").first(),
     env.DB.prepare("SELECT COUNT(*) AS count FROM source_registry WHERE source_name='Reddit' AND status='pending_authorization'").first()
   ]);
-  return{version:"3.0.1",activeBrands:brands?.count||0,sourceStatus:sources.results||[],competitorEventsLast30Days:events?.count||0,retailObservations:retail?.count||0,discoveryCandidatesPending:discovery?.count||0,redditPendingAuthorization:!!reddit?.count};
+  return{version:"3.0.2",activeBrands:brands?.count||0,sourceStatus:sources.results||[],competitorEventsLast30Days:events?.count||0,retailObservations:retail?.count||0,discoveryCandidatesPending:discovery?.count||0,redditPendingAuthorization:!!reddit?.count};
 }
 // Source Monitor distinguishes registered candidates from actual collection evidence.
 async function sourceMonitor(env){
@@ -254,7 +313,7 @@ async function sourceMonitor(env){
       articlesInDatabase:Number(article.article_count||0),articlesCollected30Days:Number(article.articles_collected_30d||0),
       articlesAddedByRuns:Number(run.articles_added_total||0)};
   });
-  return{version:'3.0.1',generatedAt:new Date().toISOString(),scope:'registered_sources_only',
+  return{version:'3.0.2',generatedAt:new Date().toISOString(),scope:'registered_sources_only',
     note:'Registered != enabled; collecting requires successful recent source_runs. Retail and community collectors are disabled.',sources:items};
 }
 // This is OBSERVED COVERAGE across ingested articles/events, not brand market share.
@@ -280,7 +339,7 @@ async function brandCoverage(env){
       FROM competitor_events GROUP BY brand_name
     ) e ON e.brand_name=b.brand_name
     WHERE b.status='active' ORDER BY b.priority DESC,b.brand_name ASC`).all();
-  return{version:'3.0.1',generatedAt:new Date().toISOString(),scope:'ingested_article_and_event_data_only',
+  return{version:'3.0.2',generatedAt:new Date().toISOString(),scope:'ingested_article_and_event_data_only',
     note:'Zero indicates no matched record in current monitored samples; it does NOT mean the brand had no releases or market activity.',
     brands:rows.results||[]};
 }
@@ -288,6 +347,17 @@ async function brandCoverage(env){
 async function adminV3Routes(req,env,u){
   const path=u.pathname;
   if(path==="/api/admin/v3/source-monitor"&&req.method==="GET")return j(await sourceMonitor(env));
+  if(path==="/api/admin/v3/media-activation"&&req.method==="GET")return j(await mediaActivationQueue(env));
+  if(path==="/api/admin/v3/sources/check-feed"&&req.method==="POST"){
+    let body;try{body=await req.json();}catch{return j({error:'Valid JSON body required'},400);}
+    if(!body||typeof body.id!=='string'||!body.id.trim())return j({error:'Registered source id is required'},400);
+    const result=await checkAuthorizedFeed(env,body.id.trim());return j(result.body,result.status);
+  }
+  if(path==="/api/admin/v3/source-feed-checks"&&req.method==="GET"){
+    const n=Math.min(Math.max(Number(new URL(req.url).searchParams.get('limit'))||30,1),100);
+    const r=await env.DB.prepare('SELECT source_name,checked_at,success,http_status,parsed_items,error_message FROM source_feed_checks ORDER BY checked_at DESC LIMIT ?').bind(n).all();
+    return j({version:'3.0.2',checks:r.results||[]});
+  }
   if(path==="/api/admin/v3/brand-coverage"&&req.method==="GET")return j(await brandCoverage(env));
   if(path==="/api/admin/v3/summary"&&req.method==="GET")return j(await adminV3Summary(env));
   if(path==="/api/admin/v3/backfill-events"&&req.method==="POST")return j(await backfillCompetitorEvents(env,u.searchParams.get("limit")||200));
@@ -369,7 +439,7 @@ async function adminV3Routes(req,env,u){
   return j({error:"V3 admin route not found"},404);
 }
 
-async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:"3.0.1",translationEnabled:false,contentLanguage:"en-original",features:{brandWatchlist:true,sourceRegistry:true,retailDataAuthorizationGated:true,redditStatus:"pending_authorization"},time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
+async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:"3.0.2",translationEnabled:false,contentLanguage:"en-original",features:{brandWatchlist:true,sourceRegistry:true,retailDataAuthorizationGated:true,redditStatus:"pending_authorization"},time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
   if(!auth(req,env))return j({error:"Unauthorized"},401);
   const raw=Number(u.searchParams.get('min_score')??0);
   const min=Number.isFinite(raw)?Math.min(Math.max(raw,0),100):0;
@@ -391,7 +461,7 @@ async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS
     evidence:x.evidence?JSON.parse(x.evidence):[],analysisStatus:x.analysis_status
   }));
   const totalMatching=counts?.matching||0;
-  return j({generatedAt:new Date().toISOString(),mode:'LIVE',version:'3.0.1',translationEnabled:false,contentLanguage:'en-original',minRelevanceScore:min,
+  return j({generatedAt:new Date().toISOString(),mode:'LIVE',version:'3.0.2',translationEnabled:false,contentLanguage:'en-original',minRelevanceScore:min,
     totalArticles:counts?.total||0,totalMatching,returned:items.length,offset,limit,
     hasMore:offset+items.length<totalMatching,nextOffset:offset+items.length,items});
 }
