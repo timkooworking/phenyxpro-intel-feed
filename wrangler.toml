@@ -21,3 +21,5 @@ Gearnews|https://www.gearnews.com/feed/|Brand & Product
 Mix Online|https://www.mixonline.com/feed|Media & Retail
 AVNation|https://www.avnation.tv/feed/|Media & Retail
 """
+[ai]
+binding = "AI"
