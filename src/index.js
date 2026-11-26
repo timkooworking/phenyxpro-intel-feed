@@ -91,16 +91,32 @@ async function analyze(item,env,scoreValue){
   }
 }
 
+// Feed collection is permission-gated. Registry entries alone never activate a source.
+// Legacy RSS_FEEDS is respected only for the three production feeds already
+// registered and authorized in V3.0; it cannot bypass a disabled registry row.
+const AUTHORIZED_FEED_PERMISSIONS=new Set(["existing_configured","approved_public_feed","licensed"]);
+const LEGACY_MEDIA_SOURCE_NAMES=new Set(["Gearnews","Mix Online","AVNation"]);
 async function sources(env){
-  const byUrl=new Map();
-  const registry=await env.DB.prepare("SELECT id,source_name,source_type,feed_url,permission_status,status,priority FROM source_registry WHERE status='active' AND source_type IN ('media','brand_pr') AND feed_url IS NOT NULL AND permission_status IN ('existing_configured','approved_public_feed','licensed') ORDER BY priority DESC").all();
-  for(const row of registry.results||[])byUrl.set(row.feed_url,{id:row.id,name:row.source_name,url:row.feed_url,category:"Media & Retail",sourceType:row.source_type,priority:row.priority||50});
+  const rows=await env.DB.prepare("SELECT id,source_name,source_type,feed_url,permission_status,status,priority FROM source_registry ORDER BY priority DESC").all();
+  const byUrl=new Map(), legacyRegistry=new Map();
+  for(const row of rows.results||[]){
+    if(LEGACY_MEDIA_SOURCE_NAMES.has(row.source_name))legacyRegistry.set(row.source_name,row);
+    if(row.status!=="active"||!AUTHORIZED_FEED_PERMISSIONS.has(row.permission_status))continue;
+    if(!["media","brand_pr"].includes(row.source_type)||!/^https:\/\//i.test(row.feed_url||""))continue;
+    byUrl.set(row.feed_url,{id:row.id,name:row.source_name,url:row.feed_url,category:"Media & Retail",sourceType:row.source_type,priority:row.priority||50});
+  }
+  // Only registered, approved legacy sources may be present through the old config.
+  // Unknown or disabled feed lines are deliberately ignored, not fetched.
   for(const line of (env.RSS_FEEDS||"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean)){
     const[n,u,c]=line.split("|").map(v=>(v||"").trim());
-    if(u&&/^https:\/\//i.test(u)&&!byUrl.has(u))byUrl.set(u,{id:null,name:n||"RSS source",url:u,category:c||"Brand & Product",sourceType:"media",priority:50});
+    const reg=legacyRegistry.get(n);
+    if(!reg||reg.status!=="active"||!AUTHORIZED_FEED_PERMISSIONS.has(reg.permission_status))continue;
+    if(!u||!/^https:\/\//i.test(u)||u!==reg.feed_url)continue;
+    if(!byUrl.has(u))byUrl.set(u,{id:reg.id,name:reg.source_name,url:u,category:c||"Brand & Product",sourceType:"media",priority:reg.priority||50});
   }
   return [...byUrl.values()].sort((a,b)=>(b.priority||0)-(a.priority||0));
 }
+
 function inferRegion(text){
   const t=String(text||"").toLowerCase();
   if(/\b(brazil|brasil|brazilian|sao paulo|são paulo|rio de janeiro)\b/.test(t))return"Brazil";
@@ -149,7 +165,7 @@ async function collect(src,env,brandRules){
   await env.DB.prepare("INSERT INTO source_runs (id,source_name,started_at,status) VALUES (?,?,?,?)").bind(id,src.name,start,"running").run();
   let seen=0,added=0,events=0,candidates=0;
   try{
-    const r=await fetch(src.url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/3.0 RSS reader"}});
+    const r=await fetch(src.url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/3.0.1 RSS reader"}});
     if(!r.ok)throw Error(`Feed HTTP ${r.status}`);
     const items=parse(await r.text()).slice(0,40);seen=items.length;
     for(const item of items){
@@ -206,10 +222,73 @@ async function adminV3Summary(env){
     env.DB.prepare("SELECT COUNT(*) AS count FROM source_discovery WHERE status='needs_review'").first(),
     env.DB.prepare("SELECT COUNT(*) AS count FROM source_registry WHERE source_name='Reddit' AND status='pending_authorization'").first()
   ]);
-  return{version:"3.0.0",activeBrands:brands?.count||0,sourceStatus:sources.results||[],competitorEventsLast30Days:events?.count||0,retailObservations:retail?.count||0,discoveryCandidatesPending:discovery?.count||0,redditPendingAuthorization:!!reddit?.count};
+  return{version:"3.0.1",activeBrands:brands?.count||0,sourceStatus:sources.results||[],competitorEventsLast30Days:events?.count||0,retailObservations:retail?.count||0,discoveryCandidatesPending:discovery?.count||0,redditPendingAuthorization:!!reddit?.count};
 }
+// Source Monitor distinguishes registered candidates from actual collection evidence.
+async function sourceMonitor(env){
+  const [r,runAgg,articleAgg]=await Promise.all([
+    env.DB.prepare("SELECT id,source_name,source_type,website_url,feed_url,access_method,permission_status,permission_reference,status,priority,notes,last_checked_at,last_success_at,last_error FROM source_registry ORDER BY priority DESC,source_name ASC").all(),
+    env.DB.prepare(`SELECT source_name,COUNT(*) AS total_runs,
+      SUM(CASE WHEN datetime(started_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END) AS runs_30d,
+      SUM(CASE WHEN status='success' AND datetime(started_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END) AS successes_30d,
+      SUM(CASE WHEN status='error' AND datetime(started_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END) AS failures_30d,
+      MAX(started_at) AS latest_run_at,
+      MAX(CASE WHEN status='success' THEN finished_at END) AS latest_success_at,
+      SUM(COALESCE(items_added,0)) AS articles_added_total
+      FROM source_runs GROUP BY source_name`).all(),
+    env.DB.prepare(`SELECT source_name,COUNT(*) AS article_count,
+      SUM(CASE WHEN datetime(collected_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END) AS articles_collected_30d,
+      MAX(collected_at) AS last_article_collected_at
+      FROM articles GROUP BY source_name`).all()
+  ]);
+  const runs=new Map((runAgg.results||[]).map(x=>[x.source_name,x]));
+  const articles=new Map((articleAgg.results||[]).map(x=>[x.source_name,x]));
+  const items=(r.results||[]).map(x=>{
+    const run=runs.get(x.source_name)||{},article=articles.get(x.source_name)||{};
+    const eligible=x.status==='active'&&AUTHORIZED_FEED_PERMISSIONS.has(x.permission_status)&&["media","brand_pr"].includes(x.source_type)&&!!x.feed_url;
+    const runs30=Number(run.runs_30d||0),ok30=Number(run.successes_30d||0);
+    return {...x,collectorEligible:eligible,
+      collectionStatus:eligible?(ok30>0?'collecting':(runs30>0?'error_or_no_success':'awaiting_first_run')):'not_enabled',
+      runs30Days:runs30,successfulRuns30Days:ok30,failedRuns30Days:Number(run.failures_30d||0),
+      latestRunAt:run.latest_run_at||null,latestSuccessfulRunAt:run.latest_success_at||x.last_success_at||null,
+      articlesInDatabase:Number(article.article_count||0),articlesCollected30Days:Number(article.articles_collected_30d||0),
+      articlesAddedByRuns:Number(run.articles_added_total||0)};
+  });
+  return{version:'3.0.1',generatedAt:new Date().toISOString(),scope:'registered_sources_only',
+    note:'Registered != enabled; collecting requires successful recent source_runs. Retail and community collectors are disabled.',sources:items};
+}
+// This is OBSERVED COVERAGE across ingested articles/events, not brand market share.
+async function brandCoverage(env){
+  const rows=await env.DB.prepare(`
+    SELECT b.brand_name,b.competitor_tier,b.priority,b.status,
+      COALESCE(a.article_count,0) AS matched_articles,
+      COALESCE(a.sources_count,0) AS observed_source_count,
+      COALESCE(a.articles_30d,0) AS matched_articles_30d,
+      a.last_published_at,
+      COALESCE(e.events_count,0) AS events_count,
+      COALESCE(e.events_30d,0) AS events_30d
+    FROM brand_watchlist b
+    LEFT JOIN (
+      SELECT brand, COUNT(*) AS article_count,COUNT(DISTINCT source_name) AS sources_count,
+        SUM(CASE WHEN datetime(published_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END) AS articles_30d,
+        MAX(published_at) AS last_published_at
+      FROM articles WHERE brand IS NOT NULL AND brand!='' GROUP BY brand
+    ) a ON a.brand=b.brand_name
+    LEFT JOIN (
+      SELECT brand_name,COUNT(*) AS events_count,
+        SUM(CASE WHEN datetime(published_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END) AS events_30d
+      FROM competitor_events GROUP BY brand_name
+    ) e ON e.brand_name=b.brand_name
+    WHERE b.status='active' ORDER BY b.priority DESC,b.brand_name ASC`).all();
+  return{version:'3.0.1',generatedAt:new Date().toISOString(),scope:'ingested_article_and_event_data_only',
+    note:'Zero indicates no matched record in current monitored samples; it does NOT mean the brand had no releases or market activity.',
+    brands:rows.results||[]};
+}
+
 async function adminV3Routes(req,env,u){
   const path=u.pathname;
+  if(path==="/api/admin/v3/source-monitor"&&req.method==="GET")return j(await sourceMonitor(env));
+  if(path==="/api/admin/v3/brand-coverage"&&req.method==="GET")return j(await brandCoverage(env));
   if(path==="/api/admin/v3/summary"&&req.method==="GET")return j(await adminV3Summary(env));
   if(path==="/api/admin/v3/backfill-events"&&req.method==="POST")return j(await backfillCompetitorEvents(env,u.searchParams.get("limit")||200));
   if(path==="/api/admin/v3/brands"&&req.method==="GET"){
@@ -242,7 +321,12 @@ async function adminV3Routes(req,env,u){
     const b=await req.json();const allowed=["licensed","approved_public_feed","approved_product_feed"];
     if(!b.id||!allowed.includes(b.permissionStatus)||!String(b.permissionReference||"").trim())return j({error:"id, an approved permissionStatus and permissionReference are required"},400);
     if(b.feedUrl&&!/^https:\/\//i.test(b.feedUrl))return j({error:"feedUrl must use HTTPS"},400);
-    const row=await env.DB.prepare("SELECT source_type FROM source_registry WHERE id=?").bind(b.id).first();if(!row)return j({error:"Source not found"},404);
+    const row=await env.DB.prepare("SELECT source_type,feed_url FROM source_registry WHERE id=?").bind(b.id).first();if(!row)return j({error:"Source not found"},404);
+    if(["media","brand_pr"].includes(row.source_type)){
+      if(b.permissionStatus==="approved_product_feed")return j({error:"Product feed approval is only valid for retailer records."},400);
+      if(!/^https:\/\//i.test(b.feedUrl||row.feed_url||""))return j({error:"Media activation requires a verified HTTPS feedUrl."},400);
+    }
+    if(row.source_type==="retailer"&&b.permissionStatus==="approved_public_feed")return j({error:"Retail product data require approved_product_feed or licensed permission."},400);
     const nextStatus=row.source_type==="community"?"pending_authorization":"active";
     if(row.source_type==="community"&&b.permissionStatus!=="licensed")return j({error:"Community sources require a specific written license; do not activate through a generic public-feed approval."},403);
     await env.DB.prepare("UPDATE source_registry SET permission_status=?,permission_reference=?,status=?,feed_url=COALESCE(?,feed_url),notes=COALESCE(?,notes),updated_at=? WHERE id=?")
@@ -285,7 +369,7 @@ async function adminV3Routes(req,env,u){
   return j({error:"V3 admin route not found"},404);
 }
 
-async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:"3.0.0",translationEnabled:false,contentLanguage:"en-original",features:{brandWatchlist:true,sourceRegistry:true,retailDataAuthorizationGated:true,redditStatus:"pending_authorization"},time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
+async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:"3.0.1",translationEnabled:false,contentLanguage:"en-original",features:{brandWatchlist:true,sourceRegistry:true,retailDataAuthorizationGated:true,redditStatus:"pending_authorization"},time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
   if(!auth(req,env))return j({error:"Unauthorized"},401);
   const raw=Number(u.searchParams.get('min_score')??0);
   const min=Number.isFinite(raw)?Math.min(Math.max(raw,0),100):0;
@@ -307,7 +391,7 @@ async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS
     evidence:x.evidence?JSON.parse(x.evidence):[],analysisStatus:x.analysis_status
   }));
   const totalMatching=counts?.matching||0;
-  return j({generatedAt:new Date().toISOString(),mode:'LIVE',version:'3.0.0',translationEnabled:false,contentLanguage:'en-original',minRelevanceScore:min,
+  return j({generatedAt:new Date().toISOString(),mode:'LIVE',version:'3.0.1',translationEnabled:false,contentLanguage:'en-original',minRelevanceScore:min,
     totalArticles:counts?.total||0,totalMatching,returned:items.length,offset,limit,
     hasMore:offset+items.length<totalMatching,nextOffset:offset+items.length,items});
 }
