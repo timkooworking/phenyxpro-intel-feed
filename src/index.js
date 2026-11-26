@@ -9,14 +9,55 @@ function parse(xml){return(xml.match(/<(item|entry)\b[\s\S]*?<\/\1>/gi)||[]).map
 const BRANDS=[
 ["Phenyx Pro",["phenyx pro"]],["Shure",["shure"]],["Sennheiser",["sennheiser"]],["Audio-Technica",["audio-technica","audio technica"]],["RØDE",["røde","rode microphones","rode wireless"]],["Xvive",["xvive"]],["Hollyland",["hollyland"]],["Behringer",["behringer"]],["Allen & Heath",["allen & heath","allen and heath"]],["Maono",["maono"]],["TONOR",["tonor"]],["FIFINE",["fifine"]],["BOYA",["boya"]],["Comica",["comica"]],["SYNCO",["synco"]],["Saramonic",["saramonic"]],["Elgato",["elgato"]],["HyperX",["hyperx"]],["Yamaha",["yamaha"]],["Soundcraft",["soundcraft"]],["Mackie",["mackie"]],["AKG",["akg"]],["DPA",["dpa microphones","dpa microphone"]],["Electro-Voice",["electro-voice","electro voice"]],["JBL",["jbl professional","jbl pro audio"]],["QSC",["qsc"]],["Yorkville",["yorkville"]],["HK Audio",["hk audio"]],["Riedel",["riedel"]],["BishopSound",["bishopsound"]],["HEDD",["heddphone","hedd audio"]],["Focusrite",["focusrite"]],["Universal Audio",["universal audio"]],["PreSonus",["presonus"]],["Tascam",["tascam"]],["Crestron",["crestron"]]
 ];
-const PRO=[["wireless microphone",38],["wireless mic",35],["wireless system",18],["in-ear monitor",42],["in ear monitor",42],["iem system",42],["iem",34],["rf coordination",42],["antenna distribution",40],["antenna combiner",35],["bodypack",25],["transmitter",12],["receiver",12],["live sound",32],["stage monitor",30],["monitor mix",30],["pa system",32],["powered speaker",30],["subwoofer",30],["digital mixer",30],["analog mixer",25],["audio mixer",28],["sound reinforcement",32],["loudspeaker",24],["headset microphone",28],["wireless instrument",30],["guitar wireless",28],["instrument wireless",28],["broadcast audio",25],["intercom system",25],["recording studio",22],["studio microphone",28],["headphone",24],["headphones",24],["heddphone",30],["audio interface",25],["microphone",16],["microphones",16]];
+const PRO=[["wireless microphone",38],["wireless microphone system",42],["wireless mic",35],["wireless system",18],["wireless in-ear",42],["wireless iem",42],["in-ear monitor",42],["in ear monitor",42],["iem system",42],["iem",34],["immersive monitoring",42],["in-ear mix",38],["rf coordination",42],["antenna distribution",40],["antenna combiner",35],["rf spectrum",32],["bodypack",25],["transmitter",12],["receiver",12],["live sound",32],["touring engineer",30],["foh",22],["stage monitor",30],["monitor mix",30],["pa system",32],["powered speaker",30],["line array",32],["subwoofer",30],["digital console",30],["digital mixer",30],["mixing console",30],["analog mixer",25],["audio mixer",28],["sound reinforcement",32],["loudspeaker",24],["headset microphone",28],["wireless instrument",30],["guitar wireless",28],["instrument wireless",28],["broadcast audio",25],["intercom system",25],["recording studio",22],["studio microphone",28],["headphone",24],["headphones",24],["heddphone",30],["audio interface",25],["microphone",16],["microphones",16]];
 const WOR=[["house of worship",48],["worship leader",48],["worship team",44],["church audio",48],["church sound",44],["church production",44],["worship audio",48],["worship",34],["church",20],["volunteer audio",36],["church livestream",40]];
-const CRE=[["content creator",40],["creator audio",42],["podcast microphone",38],["podcasting",32],["podcast",28],["usb microphone",34],["streamer",28],["livestream audio",34],["live streaming",24],["vlogging",24],["creator microphone",38],["home studio",22],["voiceover",24],["vocal processing",22]];
+const CRE=[["content creator",40],["creator audio",42],["creator microphone",38],["wireless creator microphone",40],["podcast microphone",38],["podcasting",32],["podcast",28],["usb microphone",34],["streaming microphone",36],["gaming microphone",34],["gaming headset",28],["streamer",28],["livestream audio",34],["live streaming",24],["content creation",28],["mobile recording",28],["camera microphone",28],["vlogging",24],["home studio",22],["voiceover",24],["vocal processing",22]];
 const NEG=["medical display","healthcare technology","clinical computing","digital signage","signage showroom","attractions industry","theme park","diagnostic monitor","medical monitor"];
 function score(t,r){let n=0,m=[];for(const [w,v] of r)if(t.includes(w)){n+=v;m.push(w);}return{n:Math.min(n,90),m};}
 function family(t){const rules=[["Wireless Microphone System",["wireless microphone","wireless mic","wireless system","bodypack transmitter"]],["In-Ear Monitoring",["in-ear monitor","in ear monitor","iem system","iem"]],["RF & Antenna",["rf coordination","antenna distribution","antenna combiner","rf antenna"]],["PA & Loudspeaker",["pa system","powered speaker","loudspeaker","line array"]],["Subwoofer",["subwoofer"]],["Mixer",["digital mixer","analog mixer","audio mixer","mixing console"]],["Creator Microphone",["podcast microphone","usb microphone","creator microphone","streaming microphone"]],["Headphones & Monitoring",["headphone","headphones","heddphone","studio monitor"]],["Wireless Instrument System",["guitar wireless","instrument wireless","wireless guitar"]],["Audio Interface",["audio interface","usb interface"]],["Recording & Production",["recording studio","vocal processing","audio plugin","audio plug-in"]],["Broadcast & Intercom",["broadcast audio","intercom system","production center"]]];for(const [f,terms] of rules)if(terms.some(x=>t.includes(x)))return f;return"";}
 function contentType(t){if(/review|tested|hands-on|hands on|first impressions/.test(t))return"Review";if(/buying guide|best .* microphone|best .* wireless|best .* iem|roundup/.test(t))return"Buying Guide";if(/tutorial|how to|guide to|tips for|explained/.test(t))return"Tutorial";if(/campaign|ambassador|brand partner|giveaway/.test(t))return"Campaign";if(/sales|revenue|market share|quarterly results/.test(t))return"Business Data";if(/case study|installation|installed|relies on .* technology|powered by/.test(t))return"Case Study";if(/firmware update|software update|new feature|upgrade/.test(t))return"Product Upgrade";if(/launch|announces|announced|introduces|introduced|unveils|unveiled|debuts|debut/.test(t))return"New Product";if(/conference|expo|trade show|event|awards|nominations/.test(t))return"Industry News";return"Article";}
-function classify(title,desc,source=""){const raw=`${title||""} ${desc||""}`,t=raw.toLowerCase(),brandRule=BRANDS.find(([,terms])=>terms.some(x=>t.includes(x))),brand=brandRule?.[0]||"",phenyx=t.includes("phenyx pro")||/\b(ptu|ptm|pti|pdp)[- ]?\d/i.test(raw);const p=score(t,PRO),w=score(t,WOR),c=score(t,CRE);let ps=p.n,ws=w.n,cs=c.n;if(brand){ps+=8;if(["Maono","TONOR","FIFINE","BOYA","Comica","SYNCO","Saramonic","RØDE","Hollyland","Elgato","HyperX"].includes(brand))cs+=8;}const neg=NEG.some(x=>t.includes(x));if(neg&&ps<30&&ws<30&&cs<30){ps=Math.max(0,ps-45);ws=Math.max(0,ws-45);cs=Math.max(0,cs-45);}if(phenyx)ps=Math.max(ps,90);const ranked=[["Professional Audio",ps],["Worship Audio",ws],["Creator Audio",cs]].sort((a,b)=>b[1]-a[1]);const pillar=ranked[0][1]>=25?ranked[0][0]:"Adjacent Industry";let relevance=Math.min(100,ranked[0][1]+(phenyx?10:0));if(neg&&ranked[0][1]<30)relevance=Math.min(relevance,15);if(phenyx)relevance=100;const type=contentType(t),prod=family(t),model=(raw.match(/\b(?:PTU|PTM|PTI|PDP|TK|AM|PD|SC|MV|SM|BLX|QLX-D|SLX-D|EW-DX|EW-D|ULX-D|PGA)\s?-?\s?\d{1,4}[A-Z]?\b/gi)||[]).slice(0,5).join(",");const community=/reddit|gearspace|the gear page|the gear forum/.test(source.toLowerCase());let category="Media & Retail";if(phenyx)category="Phenyx Pro Mentions";else if(pillar==="Worship Audio")category="Worship Audio";else if(pillar==="Creator Audio")category="Creator Audio";else if(pillar==="Professional Audio"&&["New Product","Product Upgrade"].includes(type))category="Brand & Product";else if(community)category="Community / Reddit";const priority=phenyx||(relevance>=80&&["New Product","Product Upgrade","Business Data","Campaign"].includes(type))?"High":relevance>=55?"Medium":"Low";return{brand,pillar,relevance,category,priority,type,prod,model,phenyx,evidence:[...p.m.map(x=>"pro:"+x),...w.m.map(x=>"worship:"+x),...c.m.map(x=>"creator:"+x),...(brand?["brand:"+brand]:[]),...(neg?["negative:low-relevance-context"]:[])]};}
+function hasPhrase(text, phrase){
+  const hay=String(text||"").toLowerCase(),needle=String(phrase||"").toLowerCase().trim();
+  if(!needle)return false;
+  let at=hay.indexOf(needle);
+  while(at>=0){
+    const before=at===0?" ":hay[at-1],after=at+needle.length>=hay.length?" ":hay[at+needle.length];
+    const leftOk=!/[a-z0-9]/i.test(needle[0])||!/[a-z0-9]/i.test(before);
+    const rightOk=!/[a-z0-9]/i.test(needle[needle.length-1])||!/[a-z0-9]/i.test(after);
+    if(leftOk&&rightOk)return true;
+    at=hay.indexOf(needle,at+1);
+  }
+  return false;
+}
+function normalizeBrandRules(rows){
+  const rules=(rows||[]).map(x=>({name:x.brand_name||x.name,aliases:Array.isArray(x.aliases)?x.aliases:(()=>{try{return JSON.parse(x.aliases_json||"[]")}catch{return[]}})(),tier:x.competitor_tier||x.tier||"candidate",priority:Number(x.priority)||50})).filter(x=>x.name&&x.aliases.length);
+  return rules.length?rules:BRANDS.map(([name,aliases])=>({name,aliases,tier:"unclassified",priority:50}));
+}
+async function loadBrandRules(env){
+  const r=await env.DB.prepare("SELECT brand_name,aliases_json,competitor_tier,priority FROM brand_watchlist WHERE status='active' ORDER BY priority DESC").all();
+  return normalizeBrandRules(r.results||[]);
+}
+function findBrand(text,rules){
+  const sorted=[...(rules||[])].sort((a,b)=>Math.max(...b.aliases.map(x=>x.length),0)-Math.max(...a.aliases.map(x=>x.length),0));
+  for(const rule of sorted){for(const alias of rule.aliases){if(hasPhrase(text,alias))return rule;}}
+  return null;
+}
+function classify(title,desc,source="",brandRules=BRANDS.map(([name,aliases])=>({name,aliases,tier:"unclassified",priority:50}))){
+  const raw=`${title||""} ${desc||""}`,t=raw.toLowerCase(),brandRule=findBrand(raw,brandRules),brand=brandRule?.name||"";
+  const phenyx=t.includes("phenyx pro")||/\b(ptu|ptm|pti|pdp)[- ]?\d/i.test(raw);
+  const p=score(t,PRO),w=score(t,WOR),c=score(t,CRE);let ps=p.n,ws=w.n,cs=c.n;
+  if(brand){ps+=8;if(["china_export_creator","creator_audio"].includes(brandRule.tier))cs+=8;}
+  const neg=NEG.some(x=>t.includes(x));if(neg&&ps<30&&ws<30&&cs<30){ps=Math.max(0,ps-45);ws=Math.max(0,ws-45);cs=Math.max(0,cs-45);}
+  if(phenyx)ps=Math.max(ps,90);
+  const ranked=[["Professional Audio",ps],["Worship Audio",ws],["Creator Audio",cs]].sort((a,b)=>b[1]-a[1]);
+  const pillar=ranked[0][1]>=25?ranked[0][0]:"Adjacent Industry";
+  let relevance=Math.min(100,ranked[0][1]+(phenyx?10:0));if(neg&&ranked[0][1]<30)relevance=Math.min(relevance,15);if(phenyx)relevance=100;
+  const type=contentType(t),prod=family(t),model=(raw.match(/\b(?:PTU|PTM|PTI|PDP|TK|AM|PD|SC|MV|SM|BLX|QLX-D|SLX-D|EW-DX|EW-D|ULX-D|PGA)\s?-?\s?\d{1,4}[A-Z]?\b/gi)||[]).slice(0,5).join(",");
+  const community=/reddit|gearspace|the gear page|the gear forum/.test(source.toLowerCase());let category="Media & Retail";
+  if(phenyx)category="Phenyx Pro Mentions";else if(pillar==="Worship Audio")category="Worship Audio";else if(pillar==="Creator Audio")category="Creator Audio";else if(pillar==="Professional Audio"&&["New Product","Product Upgrade"].includes(type))category="Brand & Product";else if(community)category="Community / Reddit";
+  const priority=phenyx||(relevance>=80&&["New Product","Product Upgrade","Business Data","Campaign"].includes(type))?"High":relevance>=55?"Medium":"Low";
+  return{brand,competitorTier:brandRule?.tier||"unclassified",pillar,relevance,category,priority,type,prod,model,phenyx,evidence:[...p.m.map(x=>"pro:"+x),...w.m.map(x=>"worship:"+x),...c.m.map(x=>"creator:"+x),...(brand?["brand:"+brand,"tier:"+(brandRule?.tier||"unclassified")]:[]),...(neg?["negative:low-relevance-context"]:[])]};
+}
 async function analyze(item,env,scoreValue){
   // Preserve the RSS-provided English summary. AI is used only for market analysis, never translation.
   const originalSummary=clean(item.description||item.title).slice(0,1200);
@@ -50,12 +91,201 @@ async function analyze(item,env,scoreValue){
   }
 }
 
-function sources(env){return(env.RSS_FEEDS||"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean).map(x=>{const[n,u,c]=x.split("|").map(v=>(v||"").trim());return{name:n||"RSS source",url:u,category:c||"Brand & Product"};}).filter(x=>x.url&&/^https:\/\//i.test(x.url));}
-async function collect(src,env){const id=crypto.randomUUID(),start=new Date().toISOString();await env.DB.prepare("INSERT INTO source_runs (id,source_name,started_at,status) VALUES (?,?,?,?)").bind(id,src.name,start,"running").run();let seen=0,added=0;try{const r=await fetch(src.url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/2.1 RSS reader"}});if(!r.ok)throw Error(`Feed HTTP ${r.status}`);const items=parse(await r.text()).slice(0,40);seen=items.length;for(const item of items){const m=classify(item.title,item.description,src.name),a=await analyze(item,env,m.relevance);const pub=item.date?new Date(item.date).toISOString():start;const res=await env.DB.prepare(`INSERT OR IGNORE INTO articles (id,canonical_url,title,source_name,published_at,collected_at,category,priority,brand,summary,analysis,confidence,content_type,sentiment,is_phenyx_mention,relevance_score,market_pillar,product_family,model,evidence,analysis_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),item.url,item.title,src.name,pub,start,m.category,m.priority,m.brand,a.summary,a.analysis,a.confidence,m.type,a.sentiment,m.phenyx?1:0,m.relevance,m.pillar,m.prod,m.model,JSON.stringify(m.evidence),a.status).run();if(res.meta?.changes)added+=res.meta.changes;}await env.DB.prepare("UPDATE source_runs SET finished_at=?,status=?,items_seen=?,items_added=? WHERE id=?").bind(new Date().toISOString(),"success",seen,added,id).run();}catch(e){await env.DB.prepare("UPDATE source_runs SET finished_at=?,status=?,items_seen=?,items_added=?,error_message=? WHERE id=?").bind(new Date().toISOString(),"error",seen,added,String(e).slice(0,500),id).run();}return{source:src.name,seen,added};}
-async function runCollection(env){const ss=sources(env),results=[];for(const s of ss)results.push(await collect(s,env));return{ranAt:new Date().toISOString(),configuredSources:ss.length,results};}
-async function reclassify(env,limit=100){const n=Math.min(Math.max(Number(limit)||100,1),200),rows=await env.DB.prepare("SELECT id,title,summary,source_name FROM articles WHERE analysis_status='pending' ORDER BY collected_at DESC LIMIT ?").bind(n).all(),stmts=[],counts={processed:0,professionalAudio:0,worshipAudio:0,creatorAudio:0,adjacentIndustry:0,relevant35Plus:0,highPriority:0};for(const row of rows.results||[]){const m=classify(row.title,row.summary||"",row.source_name||"");stmts.push(env.DB.prepare("UPDATE articles SET category=?,priority=?,brand=?,content_type=?,is_phenyx_mention=?,relevance_score=?,market_pillar=?,product_family=?,model=?,evidence=?,analysis_status='rules_classified' WHERE id=?").bind(m.category,m.priority,m.brand,m.type,m.phenyx?1:0,m.relevance,m.pillar,m.prod,m.model,JSON.stringify(m.evidence),row.id));counts.processed++;if(m.pillar==="Professional Audio")counts.professionalAudio++;else if(m.pillar==="Worship Audio")counts.worshipAudio++;else if(m.pillar==="Creator Audio")counts.creatorAudio++;else counts.adjacentIndustry++;if(m.relevance>=35)counts.relevant35Plus++;if(m.priority==="High")counts.highPriority++;}if(stmts.length)await env.DB.batch(stmts);const remain=await env.DB.prepare("SELECT COUNT(*) AS count FROM articles WHERE analysis_status='pending'").first();return{reclassified:counts,remainingPending:remain?.count||0,note:"规则分类结果，不等同于深度 AI 分析。"};}
+async function sources(env){
+  const byUrl=new Map();
+  const registry=await env.DB.prepare("SELECT id,source_name,source_type,feed_url,permission_status,status,priority FROM source_registry WHERE status='active' AND source_type IN ('media','brand_pr') AND feed_url IS NOT NULL AND permission_status IN ('existing_configured','approved_public_feed','licensed') ORDER BY priority DESC").all();
+  for(const row of registry.results||[])byUrl.set(row.feed_url,{id:row.id,name:row.source_name,url:row.feed_url,category:"Media & Retail",sourceType:row.source_type,priority:row.priority||50});
+  for(const line of (env.RSS_FEEDS||"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean)){
+    const[n,u,c]=line.split("|").map(v=>(v||"").trim());
+    if(u&&/^https:\/\//i.test(u)&&!byUrl.has(u))byUrl.set(u,{id:null,name:n||"RSS source",url:u,category:c||"Brand & Product",sourceType:"media",priority:50});
+  }
+  return [...byUrl.values()].sort((a,b)=>(b.priority||0)-(a.priority||0));
+}
+function inferRegion(text){
+  const t=String(text||"").toLowerCase();
+  if(/\b(brazil|brasil|brazilian|sao paulo|são paulo|rio de janeiro)\b/.test(t))return"Brazil";
+  if(/\b(mexico|méxico|mexican|mexico city)\b/.test(t))return"Mexico";
+  if(/\b(southeast asia|singapore|indonesia|malaysia|thailand|vietnam|philippines|philippine)\b/.test(t))return"Southeast Asia";
+  if(/\b(europe|european|united kingdom|uk|germany|france|italy|spain|netherlands|sweden|poland)\b/.test(t))return"Europe";
+  if(/\b(united states|u\.s\.|usa|american|new york|california|nashville|texas)\b/.test(t))return"US";
+  if(/\b(global|worldwide|international)\b/.test(t))return"Global";
+  return"Unknown";
+}
+function eventTypeFor(type,text){
+  if(type==="New Product")return"NEW_PRODUCT";
+  if(type==="Product Upgrade")return"PRODUCT_UPGRADE";
+  if(type==="Review")return"PRODUCT_REVIEW";
+  if(type==="Buying Guide")return"BUYING_GUIDE";
+  if(type==="Campaign")return/ambassador|creator|influencer|partnership/.test(text)?"CREATOR_PARTNERSHIP":"PROMOTION";
+  if(type==="Business Data")return"BUSINESS_UPDATE";
+  if(type==="Case Study")return"INSTALLATION_OR_USE_CASE";
+  if(type==="Industry News")return"INDUSTRY_NEWS";
+  return"BRAND_MENTION";
+}
+function candidateFromTitle(title){
+  const m=String(title||"").match(/^([A-Z][A-Za-z0-9+&'’.-]*(?:\s+[A-Z][A-Za-z0-9+&'’.-]*){0,2})\s+(?:announces|introduces|unveils|launches|debuts|releases)\b/i);
+  if(!m)return"";
+  const name=m[1].trim();
+  if(name.length<2||/^(the|new|first|this|that|here|how|why|what|when|where|introducing)$/i.test(name))return"";
+  return name;
+}
+async function recordDiscovery(env,item,src,region){
+  const candidate=candidateFromTitle(item.title);if(!candidate)return;
+  const key=`brand|${candidate.toLowerCase()}|${item.url}`;
+  const r=await env.DB.prepare(`INSERT OR IGNORE INTO source_discovery (id,candidate_name,candidate_type,found_by,source_name,source_url,evidence_text,suggested_category,market_region,confidence,status,discovered_at,dedupe_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .bind(crypto.randomUUID(),candidate,"brand","unrecognized_new_product_headline",src.name,item.url,String(item.title||"").slice(0,500),"Audio / Music Equipment",region,"Low","needs_review",new Date().toISOString(),key).run();
+  return r.meta?.changes||0;
+}
+async function recordCompetitorEvent(env,articleId,item,src,m,publishedAt,region){
+  if(!m.brand)return;
+  const eventType=eventTypeFor(m.type,`${item.title||""} ${item.description||""}`.toLowerCase());
+  const dedupe=`${item.url}|${eventType}|${m.brand}`;
+  const r=await env.DB.prepare(`INSERT OR IGNORE INTO competitor_events (id,article_id,brand_name,competitor_tier,event_type,product_category,market_region,source_name,source_type,source_url,published_at,observed_at,confidence,evidence_text,dedupe_key,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .bind(crypto.randomUUID(),articleId,m.brand,m.competitorTier,eventType,m.prod||null,region,src.name,src.sourceType||"media",item.url,publishedAt,new Date().toISOString(),"Medium",String(item.title||"").slice(0,500),dedupe,new Date().toISOString()).run();
+  return r.meta?.changes||0;
+}
+async function collect(src,env,brandRules){
+  const id=crypto.randomUUID(),start=new Date().toISOString();
+  await env.DB.prepare("INSERT INTO source_runs (id,source_name,started_at,status) VALUES (?,?,?,?)").bind(id,src.name,start,"running").run();
+  let seen=0,added=0,events=0,candidates=0;
+  try{
+    const r=await fetch(src.url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/3.0 RSS reader"}});
+    if(!r.ok)throw Error(`Feed HTTP ${r.status}`);
+    const items=parse(await r.text()).slice(0,40);seen=items.length;
+    for(const item of items){
+      const m=classify(item.title,item.description,src.name,brandRules),a=await analyze(item,env,m.relevance);
+      const pub=item.date&&!Number.isNaN(Date.parse(item.date))?new Date(item.date).toISOString():start;
+      const articleId=crypto.randomUUID();
+      const res=await env.DB.prepare(`INSERT OR IGNORE INTO articles (id,canonical_url,title,source_name,published_at,collected_at,category,priority,brand,summary,analysis,confidence,content_type,sentiment,is_phenyx_mention,relevance_score,market_pillar,product_family,model,evidence,analysis_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .bind(articleId,item.url,item.title,src.name,pub,start,m.category,m.priority,m.brand,a.summary,a.analysis,a.confidence,m.type,a.sentiment,m.phenyx?1:0,m.relevance,m.pillar,m.prod,m.model,JSON.stringify(m.evidence),a.status).run();
+      if(res.meta?.changes)added+=res.meta.changes;
+      const existing=res.meta?.changes?{id:articleId}:await env.DB.prepare("SELECT id FROM articles WHERE canonical_url=?").bind(item.url).first();
+      const region=inferRegion(`${item.title||""} ${item.description||""}`);
+      if(existing?.id&&m.brand)events+=await recordCompetitorEvent(env,existing.id,item,src,m,pub,region);
+      if(!m.brand&&m.type==="New Product")candidates+=await recordDiscovery(env,item,src,region);
+    }
+    await env.DB.prepare("UPDATE source_runs SET finished_at=?,status=?,items_seen=?,items_added=? WHERE id=?").bind(new Date().toISOString(),"success",seen,added,id).run();
+    if(src.id)await env.DB.prepare("UPDATE source_registry SET last_checked_at=?,last_success_at=?,last_error=NULL,updated_at=? WHERE id=?").bind(start,new Date().toISOString(),new Date().toISOString(),src.id).run();
+  }catch(e){
+    await env.DB.prepare("UPDATE source_runs SET finished_at=?,status=?,items_seen=?,items_added=?,error_message=? WHERE id=?").bind(new Date().toISOString(),"error",seen,added,String(e).slice(0,500),id).run();
+    if(src.id)await env.DB.prepare("UPDATE source_registry SET last_checked_at=?,last_error=?,updated_at=? WHERE id=?").bind(start,String(e).slice(0,500),new Date().toISOString(),src.id).run();
+  }
+  return{source:src.name,seen,added,competitorEvents:events,discoveryCandidates:candidates};
+}
+async function runCollection(env){
+  const [ss,brandRules]=await Promise.all([sources(env),loadBrandRules(env)]);
+  const results=[];for(const source of ss)results.push(await collect(source,env,brandRules));
+  return{ranAt:new Date().toISOString(),configuredSources:ss.length,registrySources:ss.filter(x=>x.id).length,results};
+}
+async function reclassify(env,limit=100){const brandRules=await loadBrandRules(env);const n=Math.min(Math.max(Number(limit)||100,1),200),rows=await env.DB.prepare("SELECT id,title,summary,source_name FROM articles WHERE analysis_status='pending' ORDER BY collected_at DESC LIMIT ?").bind(n).all(),stmts=[],counts={processed:0,professionalAudio:0,worshipAudio:0,creatorAudio:0,adjacentIndustry:0,relevant35Plus:0,highPriority:0};for(const row of rows.results||[]){const m=classify(row.title,row.summary||"",row.source_name||"",brandRules);stmts.push(env.DB.prepare("UPDATE articles SET category=?,priority=?,brand=?,content_type=?,is_phenyx_mention=?,relevance_score=?,market_pillar=?,product_family=?,model=?,evidence=?,analysis_status='rules_classified' WHERE id=?").bind(m.category,m.priority,m.brand,m.type,m.phenyx?1:0,m.relevance,m.pillar,m.prod,m.model,JSON.stringify(m.evidence),row.id));counts.processed++;if(m.pillar==="Professional Audio")counts.professionalAudio++;else if(m.pillar==="Worship Audio")counts.worshipAudio++;else if(m.pillar==="Creator Audio")counts.creatorAudio++;else counts.adjacentIndustry++;if(m.relevance>=35)counts.relevant35Plus++;if(m.priority==="High")counts.highPriority++;}if(stmts.length)await env.DB.batch(stmts);const remain=await env.DB.prepare("SELECT COUNT(*) AS count FROM articles WHERE analysis_status='pending'").first();return{reclassified:counts,remainingPending:remain?.count||0,note:"规则分类结果，不等同于深度 AI 分析。"};}
 
-async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:"2.2.1",translationEnabled:false,contentLanguage:"en-original",time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
+async function backfillCompetitorEvents(env,limit=200){
+  const brandRules=await loadBrandRules(env),n=Math.min(Math.max(Number(limit)||200,1),500);
+  const rows=await env.DB.prepare("SELECT id,title,summary,source_name,canonical_url,published_at,content_type,product_family,brand FROM articles ORDER BY collected_at DESC LIMIT ?").bind(n).all();
+  let processed=0,eventsAdded=0,candidatesAdded=0;
+  for(const row of rows.results||[]){
+    const item={title:row.title,description:row.summary||"",url:row.canonical_url};
+    const m=classify(row.title,row.summary||"",row.source_name||"",brandRules);
+    if(!m.type&&row.content_type)m.type=row.content_type;
+    const src={name:row.source_name||"Historical article",sourceType:"media"};
+    const region=inferRegion(`${row.title||""} ${row.summary||""}`);
+    if(m.brand)eventsAdded+=await recordCompetitorEvent(env,row.id,item,src,m,row.published_at||new Date().toISOString(),region);
+    else if(m.type==="New Product")candidatesAdded+=await recordDiscovery(env,item,src,region);
+    processed++;
+  }
+  return{processed,eventsAdded,candidatesAdded,note:"Existing articles were not modified; event and discovery records are additive and deduplicated."};
+}
+
+function safeJsonArray(v){try{const a=JSON.parse(v||"[]");return Array.isArray(a)?a:[]}catch{return[]}}
+async function adminV3Summary(env){
+  const [brands,sources,events,retail,discovery,reddit]=await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) AS count FROM brand_watchlist WHERE status='active'").first(),
+    env.DB.prepare("SELECT source_type,status,COUNT(*) AS count FROM source_registry GROUP BY source_type,status ORDER BY source_type,status").all(),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM competitor_events WHERE observed_at>=datetime('now','-30 days')").first(),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM product_observations").first(),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM source_discovery WHERE status='needs_review'").first(),
+    env.DB.prepare("SELECT COUNT(*) AS count FROM source_registry WHERE source_name='Reddit' AND status='pending_authorization'").first()
+  ]);
+  return{version:"3.0.0",activeBrands:brands?.count||0,sourceStatus:sources.results||[],competitorEventsLast30Days:events?.count||0,retailObservations:retail?.count||0,discoveryCandidatesPending:discovery?.count||0,redditPendingAuthorization:!!reddit?.count};
+}
+async function adminV3Routes(req,env,u){
+  const path=u.pathname;
+  if(path==="/api/admin/v3/summary"&&req.method==="GET")return j(await adminV3Summary(env));
+  if(path==="/api/admin/v3/backfill-events"&&req.method==="POST")return j(await backfillCompetitorEvents(env,u.searchParams.get("limit")||200));
+  if(path==="/api/admin/v3/brands"&&req.method==="GET"){
+    const status=u.searchParams.get("status"),tier=u.searchParams.get("tier");
+    let sql="SELECT * FROM brand_watchlist WHERE 1=1",args=[];
+    if(status){sql+=" AND status=?";args.push(status);}if(tier){sql+=" AND competitor_tier=?";args.push(tier);}
+    sql+=" ORDER BY priority DESC,brand_name ASC LIMIT 300";
+    const r=await env.DB.prepare(sql).bind(...args).all();
+    return j({brands:(r.results||[]).map(x=>({...x,aliases:safeJsonArray(x.aliases_json),coreCategories:safeJsonArray(x.core_categories_json),monitoringFocus:safeJsonArray(x.monitoring_focus_json),targetRegions:safeJsonArray(x.target_regions_json)}))});
+  }
+  if(path==="/api/admin/v3/brands"&&req.method==="POST"){
+    const b=await req.json();const name=String(b.brandName||"").trim();const aliases=Array.isArray(b.aliases)?b.aliases.map(x=>String(x).trim()).filter(Boolean).slice(0,30):[];
+    if(!name||!aliases.length||!b.evidenceUrl||!/^https:\/\//i.test(b.evidenceUrl))return j({error:"brandName, aliases and an HTTPS evidenceUrl are required"},400);
+    const id=crypto.randomUUID(),now=new Date().toISOString();
+    await env.DB.prepare("INSERT INTO brand_watchlist (id,brand_name,aliases_json,competitor_tier,core_categories_json,monitoring_focus_json,target_regions_json,priority,status,evidence_url,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(id,name,JSON.stringify(aliases),String(b.competitorTier||"cross_category_candidate"),JSON.stringify(Array.isArray(b.coreCategories)?b.coreCategories:[]),JSON.stringify(Array.isArray(b.monitoringFocus)?b.monitoringFocus:[]),JSON.stringify(Array.isArray(b.targetRegions)?b.targetRegions:["US","Europe","Brazil","Mexico","Southeast Asia"]),Number(b.priority)||50,"candidate",b.evidenceUrl,String(b.notes||"Awaiting review; not active for automatic brand matching."),now,now).run();
+    return j({created:true,id,status:"candidate",message:"Candidate saved for review; it is not yet used for automatic brand matching."},201);
+  }
+  if(path==="/api/admin/v3/brands/activate"&&req.method==="POST"){
+    const b=await req.json();if(!b.id||!b.evidenceUrl||!/^https:\/\//i.test(b.evidenceUrl))return j({error:"id and HTTPS evidenceUrl are required"},400);
+    const r=await env.DB.prepare("UPDATE brand_watchlist SET status='active',evidence_url=?,notes=?,updated_at=? WHERE id=? AND status='candidate'").bind(b.evidenceUrl,String(b.notes||"Reviewed and approved by admin."),new Date().toISOString(),b.id).run();
+    return j({activated:!!r.meta?.changes,id:b.id});
+  }
+  if(path==="/api/admin/v3/sources"&&req.method==="GET"){
+    const type=u.searchParams.get("type"),status=u.searchParams.get("status");let sql="SELECT * FROM source_registry WHERE 1=1",args=[];
+    if(type){sql+=" AND source_type=?";args.push(type);}if(status){sql+=" AND status=?";args.push(status);}sql+=" ORDER BY priority DESC,source_name ASC LIMIT 300";
+    const r=await env.DB.prepare(sql).bind(...args).all();return j({sources:(r.results||[]).map(x=>({...x,marketRegions:safeJsonArray(x.market_regions_json)}))});
+  }
+  if(path==="/api/admin/v3/sources/authorize"&&req.method==="POST"){
+    const b=await req.json();const allowed=["licensed","approved_public_feed","approved_product_feed"];
+    if(!b.id||!allowed.includes(b.permissionStatus)||!String(b.permissionReference||"").trim())return j({error:"id, an approved permissionStatus and permissionReference are required"},400);
+    if(b.feedUrl&&!/^https:\/\//i.test(b.feedUrl))return j({error:"feedUrl must use HTTPS"},400);
+    const row=await env.DB.prepare("SELECT source_type FROM source_registry WHERE id=?").bind(b.id).first();if(!row)return j({error:"Source not found"},404);
+    const nextStatus=row.source_type==="community"?"pending_authorization":"active";
+    if(row.source_type==="community"&&b.permissionStatus!=="licensed")return j({error:"Community sources require a specific written license; do not activate through a generic public-feed approval."},403);
+    await env.DB.prepare("UPDATE source_registry SET permission_status=?,permission_reference=?,status=?,feed_url=COALESCE(?,feed_url),notes=COALESCE(?,notes),updated_at=? WHERE id=?")
+      .bind(b.permissionStatus,String(b.permissionReference).slice(0,500),nextStatus,b.feedUrl||null,b.notes?String(b.notes).slice(0,500):null,new Date().toISOString(),b.id).run();
+    return j({updated:true,id:b.id,status:nextStatus,permissionStatus:b.permissionStatus});
+  }
+  if(path==="/api/admin/v3/events"&&req.method==="GET"){
+    const limit=Math.min(Math.max(Number(u.searchParams.get("limit"))||100,1),200),brand=u.searchParams.get("brand"),type=u.searchParams.get("type"),region=u.searchParams.get("region");
+    let sql="SELECT * FROM competitor_events WHERE 1=1",args=[];if(brand){sql+=" AND brand_name=?";args.push(brand);}if(type){sql+=" AND event_type=?";args.push(type);}if(region){sql+=" AND market_region=?";args.push(region);}sql+=" ORDER BY COALESCE(published_at,observed_at) DESC LIMIT ?";args.push(limit);
+    const r=await env.DB.prepare(sql).bind(...args).all();return j({events:r.results||[]});
+  }
+  if(path==="/api/admin/v3/discovery"&&req.method==="GET"){
+    const status=u.searchParams.get("status")||"needs_review",limit=Math.min(Math.max(Number(u.searchParams.get("limit"))||100,1),200);
+    const r=await env.DB.prepare("SELECT * FROM source_discovery WHERE status=? ORDER BY discovered_at DESC LIMIT ?").bind(status,limit).all();return j({candidates:r.results||[]});
+  }
+  if(path==="/api/admin/v3/discovery"&&req.method==="POST"){
+    const b=await req.json(),name=String(b.candidateName||"").trim(),url=String(b.sourceUrl||"").trim();
+    if(!name||!/^https:\/\//i.test(url))return j({error:"candidateName and HTTPS sourceUrl are required"},400);
+    const key=`manual|${name.toLowerCase()}|${url}`,id=crypto.randomUUID();
+    await env.DB.prepare("INSERT OR IGNORE INTO source_discovery (id,candidate_name,candidate_type,found_by,source_name,source_url,evidence_text,suggested_category,market_region,confidence,status,discovered_at,dedupe_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(id,name,String(b.candidateType||"brand"),"manual_review",String(b.sourceName||"Admin submission"),url,String(b.evidenceText||"").slice(0,1000),String(b.suggestedCategory||"Audio / Music Equipment"),String(b.marketRegion||"Unknown"),String(b.confidence||"Medium"),"needs_review",new Date().toISOString(),key).run();
+    return j({created:true,id,status:"needs_review"},201);
+  }
+  if(path==="/api/admin/v3/retail-observations"&&req.method==="GET"){
+    const limit=Math.min(Math.max(Number(u.searchParams.get("limit"))||100,1),200),brand=u.searchParams.get("brand");
+    let sql="SELECT * FROM product_observations WHERE 1=1",args=[];if(brand){sql+=" AND brand_name=?";args.push(brand);}sql+=" ORDER BY observed_at DESC LIMIT ?";args.push(limit);
+    const r=await env.DB.prepare(sql).bind(...args).all();return j({observations:r.results||[]});
+  }
+  if(path==="/api/admin/v3/retail-observations"&&req.method==="POST"){
+    const b=await req.json();const source=await env.DB.prepare("SELECT id,source_name,source_type,status,permission_status FROM source_registry WHERE id=?").bind(b.sourceId||"").first();
+    if(!source||source.source_type!=="retailer"||source.status!=="active"||!['licensed','approved_product_feed'].includes(source.permission_status))return j({error:"Retail source is not authorized for product-data ingestion."},403);
+    const price=b.observedPrice===null||b.observedPrice===undefined?null:Number(b.observedPrice),list=b.listPrice===null||b.listPrice===undefined?null:Number(b.listPrice);
+    if(!b.productName||!b.productUrl||!/^https:\/\//i.test(b.productUrl)||!/^[A-Z]{3}$/.test(String(b.currency||""))||!String(b.permissionReference||"").trim()||(price!==null&&(!Number.isFinite(price)||price<0))||(list!==null&&(!Number.isFinite(list)||list<0)))return j({error:"productName, HTTPS productUrl, ISO currency, non-negative prices and permissionReference are required"},400);
+    const observedAt=b.observedAt&& !Number.isNaN(Date.parse(b.observedAt))?new Date(b.observedAt).toISOString():new Date().toISOString();
+    const key=[source.id,b.productUrl,observedAt,price===null?"":price].join("|");
+    await env.DB.prepare("INSERT OR IGNORE INTO product_observations (id,source_id,retailer_name,brand_name,product_name,model,sku,market_region,country,currency,list_price,observed_price,stock_status,promotion_text,product_url,observed_at,permission_reference,raw_data_json,dedupe_key,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(crypto.randomUUID(),source.id,source.source_name,String(b.brandName||""),String(b.productName),String(b.model||""),String(b.sku||""),String(b.marketRegion||"Unknown"),String(b.country||""),String(b.currency),list,price,String(b.stockStatus||"unknown"),String(b.promotionText||""),b.productUrl,observedAt,String(b.permissionReference).slice(0,500),JSON.stringify(b.rawData||{}),key,new Date().toISOString()).run();
+    return j({saved:true,retailer:source.source_name,observedAt},201);
+  }
+  return j({error:"V3 admin route not found"},404);
+}
+
+async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:"3.0.0",translationEnabled:false,contentLanguage:"en-original",features:{brandWatchlist:true,sourceRegistry:true,retailDataAuthorizationGated:true,redditStatus:"pending_authorization"},time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
   if(!auth(req,env))return j({error:"Unauthorized"},401);
   const raw=Number(u.searchParams.get('min_score')??0);
   const min=Number.isFinite(raw)?Math.min(Math.max(raw,0),100):0;
@@ -77,13 +307,17 @@ async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS
     evidence:x.evidence?JSON.parse(x.evidence):[],analysisStatus:x.analysis_status
   }));
   const totalMatching=counts?.matching||0;
-  return j({generatedAt:new Date().toISOString(),mode:'LIVE',version:'2.2.1',translationEnabled:false,contentLanguage:'en-original',minRelevanceScore:min,
+  return j({generatedAt:new Date().toISOString(),mode:'LIVE',version:'3.0.0',translationEnabled:false,contentLanguage:'en-original',minRelevanceScore:min,
     totalArticles:counts?.total||0,totalMatching,returned:items.length,offset,limit,
     hasMore:offset+items.length<totalMatching,nextOffset:offset+items.length,items});
 }
 if(u.pathname==='/api/admin/translate'&&req.method==='POST'){
   if(!auth(req,env))return j({error:'Unauthorized'},401);
   return j({error:'translation_disabled',message:'Machine translation is disabled. The API serves original English titles and source summaries.'},410);
+}
+if(u.pathname.startsWith("/api/admin/v3/")){
+  if(!auth(req,env))return j({error:"Unauthorized"},401);
+  return adminV3Routes(req,env,u);
 }
 if(u.pathname==="/api/admin/run-collection"&&req.method==="POST"){if(!auth(req,env))return j({error:"Unauthorized"},401);return j(await runCollection(env));}if(u.pathname==="/api/admin/reclassify"&&req.method==="POST"){if(!auth(req,env))return j({error:"Unauthorized"},401);return j(await reclassify(env,u.searchParams.get("limit")||100));}if(u.pathname==="/api/admin/source-runs"&&req.method==="GET"){if(!auth(req,env))return j({error:"Unauthorized"},401);const r=await env.DB.prepare("SELECT * FROM source_runs ORDER BY started_at DESC LIMIT 100").all();return j({runs:r.results||[]});}if(u.pathname==="/api/admin/summary"&&req.method==="GET"){if(!auth(req,env))return j({error:"Unauthorized"},401);const r=await env.DB.prepare("SELECT market_pillar,category,COUNT(*) AS total,AVG(relevance_score) AS avg_relevance,SUM(CASE WHEN relevance_score>=35 THEN 1 ELSE 0 END) AS relevant FROM articles GROUP BY market_pillar,category ORDER BY total DESC").all();return j({summary:r.results||[]});}return j({error:"Not found"},404);}
 export default{fetch(req,env){return handle(req,env).catch(e=>j({error:"Internal server error",detail:String(e).slice(0,300)},500));},scheduled(_event,env,ctx){ctx.waitUntil(runCollection(env));}};
