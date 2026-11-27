@@ -1,6 +1,6 @@
 {
   "name": "phenyxpro-intel-feed",
-  "version": "3.0.3",
+  "version": "3.0.3.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "db:create": "wrangler d1 create phenyxpro-intel-db",
     "db:migrate:local": "wrangler d1 migrations apply phenyxpro-intel-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply phenyxpro-intel-db --remote",
-    "check": "node --check src/index.js && node tests/smoke.mjs && node tests/media_sources.mjs && node tests/media_activation.mjs && node tests/open_media_expansion.mjs && python3 tests/migration_smoke.py"
+    "check": "node --check src/index.js && node tests/smoke.mjs && node tests/media_sources.mjs && node tests/media_activation.mjs && node tests/open_media_expansion.mjs && node tests/podcast_guid_hotfix.mjs && python3 tests/migration_smoke.py"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
