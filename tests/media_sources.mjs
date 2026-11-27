@@ -34,7 +34,7 @@ const unauthorized=await worker.fetch(new Request('https://test.local/api/admin/
 assert(unauthorized.status===401,'source monitor must require FEED_TOKEN');
 const monitor=await worker.fetch(new Request('https://test.local/api/admin/v3/source-monitor',{headers}),env);
 const monitorJson=await monitor.json();
-assert(monitor.status===200&&monitorJson.version==='3.0.3','source monitor endpoint must work');
+assert(monitor.status===200&&monitorJson.version==='3.0.3.1','source monitor endpoint must work');
 assert(monitorJson.sources.find(x=>x.source_name==='Gearnews').collectorEligible===true,'active official feed must be eligible');
 assert(monitorJson.sources.find(x=>x.source_name==='MusicRadar').collectorEligible===false,'permission-required feed must be disabled');
 assert(monitorJson.sources.find(x=>x.source_name==='Reddit').collectionStatus==='not_enabled','Reddit must not be collected');
@@ -54,4 +54,4 @@ try{
   assert(body.configuredSources===1,'only approved Gearnews should be collected');
   assert(calls.length===1&&calls[0]==='https://www.gearnews.com/feed/','blocked URLs must never be fetched');
 }finally{globalThis.fetch=realFetch;}
-console.log('V3.0.3 media monitoring & permission gating tests passed.');
+console.log('V3.0.3.1 media monitoring & permission gating tests passed.');
