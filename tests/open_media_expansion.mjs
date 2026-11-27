@@ -36,7 +36,7 @@ class MockStatement {
   async run(){return {meta:{changes:1}};}
   async first(){return null;}
 }
-const env={DB:{prepare:sql=>new MockStatement(sql)}};
+const env={DB:{prepare:sql=>new MockStatement(sql),batch:stmts=>Promise.all(stmts.map(stmt=>stmt.run()))}};
 try {
   const result=await __test.collect({
     id:'src-test-podcast',name:'Test Podcast',url:'https://rss.example.test/show.rss',
