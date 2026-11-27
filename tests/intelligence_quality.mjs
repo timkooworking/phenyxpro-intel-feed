@@ -19,7 +19,7 @@ repairBranch.close();
 migration(db, "0001");
 migration(db, "0002");
 assert.throws(() => migration(db, "0003"), /duplicate column name: relevance_score/);
-for (const name of names.slice(3, -1)) migration(db, name.slice(0, 4));
+for (const name of names.slice(3).filter(name=>name < "0009")) migration(db, name.slice(0, 4));
 
 const church = "Church Sound Podcast", signal = "Signal To Noise (Pro Sound Web Podcast)";
 const reviewed = [
@@ -30,7 +30,8 @@ const reviewed = [
   ["e669cde2-5ce6-4a09-b55d-a71813f2c558","324. Matt Dale & Donny Kuser Of SoundBase","Allen & Heath","19033615-324-matt-dale-and-donny-kuser-of-soundbase","needs_review"],
   ["dd371d22-da1d-452a-8e99-0e4006b7eeab","323. The State Of AI In Audio With Joe Allan Muharsky","Allen & Heath","19016849-323-the-state-of-ai-in-audio-with-joe-allan-muharsky","technical_discussion"]
 ];
-const now = "2026-11-27T01:00:00.000Z";
+const historicalDate = new Date(Date.now()-60*86_400_000);
+const now = historicalDate.toISOString();
 const insertArticle = db.prepare(`INSERT INTO articles (
   id,canonical_url,title,source_name,published_at,collected_at,relevance_score,summary,content_type
 ) VALUES (?,?,?,?,?,?,?,?,?)`);
@@ -214,7 +215,7 @@ globalThis.fetch = async input => {
   const prefix = podcast ? "podcast" : "media";
   return new Response("<rss><channel>" + items.map(([title,summary],i)=>
     "<item><title>"+title+"</title><link>https://feed.example.test/"+prefix+"/"+i+"</link>"+
-    "<pubDate>Fri, 27 Nov 2026 01:00:00 GMT</pubDate><description>"+summary+"</description></item>"
+    "<pubDate>"+historicalDate.toUTCString()+"</pubDate><description>"+summary+"</description></item>"
   ).join("") + "</channel></rss>",{headers:{"Content-Type":"application/rss+xml"}});
 };
 const podcast = {name:signal,url:"https://feed.example.test/podcast",feedContentMode:"podcast_metadata",maxItems:20};
@@ -260,5 +261,98 @@ assert.equal((await request(api+"review-queue?status=dismissed")).reviews[0].leg
 const backfill = await request(api+"backfill-events?limit=200",200,{});
 assert.equal(backfill.eventsAdded,0);
 assert.equal((await request(api+"events?scope=all")).events.length,44);
+
+const rows = table => db.prepare(`SELECT * FROM ${table} ORDER BY id`).all();
+const registeredBefore = rows("source_registry");
+const brandsBefore = rows("brand_watchlist");
+const historyBefore = ["articles","competitor_events","intelligence_notes","source_runs"].map(rows);
+migration(db, "0010");
+const registeredAfter = rows("source_registry");
+assert.deepEqual(rows("brand_watchlist"), brandsBefore);
+assert.deepEqual(["articles","competitor_events","intelligence_notes","source_runs"].map(rows), historyBefore);
+assert.equal(registeredAfter.filter(row=>row.status==="active").length,9);
+for(const row of registeredBefore.filter(row=>row.status!=="needs_verification")) {
+  assert.deepEqual(registeredAfter.find(source=>source.id===row.id),row);
+}
+migration(db, "0010");
+assert.deepEqual(rows("source_registry"),registeredAfter);
+const openCandidates = registeredAfter.filter(row=>row.access_method==="open_media_review");
+assert.equal(openCandidates.length,5);
+for(const row of openCandidates) {
+  assert.equal(row.status,"needs_verification");
+  assert.ok(row.notes);
+}
+const publishedDate = new Date(Date.now()-60_000);
+const psw = registeredAfter.find(row=>row.id==="src-prosoundweb");
+const performer = registeredAfter.find(row=>row.id==="src-performer-mag");
+assert.equal(performer.feed_content_mode,"editorial_metadata");
+for(const row of [psw,performer]) {
+  assert.equal(row.permission_status,"approved_public_editorial_metadata");
+}
+assert.equal(psw.max_items_per_run,10);
+const pswOrigin = new URL(psw.feed_url).origin;
+const editorialFeed = [
+  ["Shure Launches AX90 Wireless Microphone System With UHF Diversity", pswOrigin+"/ax90"],
+  ["Company Office Hours", pswOrigin+"/office"],
+  ["Signal To Noise, Episode 337: Shure Wireless Microphone", pswOrigin+"/podcast"],
+  ["Church Sound Podcast, Episode 154: Shure Wireless Microphone", pswOrigin+"/church-podcast"],
+  ["Shure Launches AX91 Wireless Microphone", "https://elsewhere.test/ax91"],
+  ["Undated item", pswOrigin+"/undated", "unknown"]
+].map(([title,url,date=publishedDate.toUTCString()]) =>
+  `<item><title>${title}</title><link>${url}</link><pubDate>${date}</pubDate>`+
+  '<description>Private excerpt about Allen &amp; Heath</description><content:encoded>Full text</content:encoded></item>'
+).join("");
+const editorialSource = {
+  id:psw.id,name:psw.source_name,url:psw.feed_url,feedContentMode:psw.feed_content_mode,maxItems:psw.max_items_per_run
+};
+const feedRequests = [];
+let blocked = false;
+globalThis.fetch = async (url,options) => {
+  feedRequests.push([url,options.redirect]);
+  assert.equal(url,psw.feed_url);
+  assert.equal(options.redirect,"error");
+  if(blocked)return new Response("Forbidden",{status:403});
+  return new Response("<rss><channel>"+editorialFeed+"</channel></rss>",{headers:{"Content-Type":"application/rss+xml"}});
+};
+try {
+  for(const row of openCandidates) await request(api+"sources/check-feed",403,{id:row.id});
+  assert.deepEqual(feedRequests,[]);
+  const preflight = await request(api+"sources/check-feed",200,{id:psw.id});
+  assert.equal(preflight.parsedItems,2);
+  assert.deepEqual(rows("articles"),historyBefore[0]);
+  const metadataEnv = {...env,AI_API_URL:"https://ai.invalid/",AI_API_KEY:"fixture",AI_MODEL:"fixture"};
+  assert.equal((await __test.collect(editorialSource,metadataEnv,brandRules)).added,2);
+  assert.equal((await __test.collect(editorialSource,metadataEnv,brandRules)).added,0);
+  blocked = true;
+  assert.equal((await __test.collect(editorialSource,metadataEnv,brandRules)).added,0);
+  assert.equal(feedRequests.length,4);
+} finally {
+  globalThis.fetch = realFetch;
+}
+const imported = db.prepare("SELECT brand,summary,relevance_score FROM articles WHERE source_name=? ORDER BY relevance_score DESC").all(psw.source_name);
+assert.equal(imported.length,2);
+assert.equal(imported[0].brand,"Shure");
+assert.ok(imported[0].relevance_score>=35);
+assert.ok(imported.every(row=>row.summary===""));
+db.prepare(`INSERT INTO articles (id,canonical_url,title,source_name,published_at,collected_at,brand,relevance_score,podcast_metadata)
+  VALUES ('recent-podcast','https://example.test/recent-podcast','A separate Shure episode',?,?,?,'Shure',99,1)`
+).run(church,publishedDate.toISOString(),publishedDate.toISOString());
+await request(api+"brand-coverage",401,null,false);
+const coverage = await request(api+"brand-coverage");
+assert.equal(coverage.marketNewsCoverage30Days.activeBrands,41);
+assert.equal(coverage.marketNewsCoverage30Days.coveredBrands,1);
+const shure = coverage.brands.find(row=>row.brand_name==="Shure");
+assert.equal(shure.market_news_articles_30d,1);
+assert.equal(shure.market_news_sources_30d,1);
+assert.equal(shure.matched_podcast_episodes_30d,1);
+const sourceMonitor = await request(api+"source-monitor");
+assert.equal(sourceMonitor.sources.find(row=>row.id===psw.id).qualityScore,58);
+assert.equal(sourceMonitor.sources.find(row=>row.id===performer.id).qualityScore,null);
+assert.equal(sourceMonitor.sources.find(row=>row.source_name===church).qualityScore,null);
+const activation = await request(api+"media-activation");
+assert.equal(activation.sources.find(row=>row.sourceId==="src-foh").action,openCandidates.find(row=>row.id==="src-foh").notes);
+const marketNews = await request("/api/briefing.json");
+assert.ok(marketNews.items.some(item=>item.source===pswOrigin+"/ax90"));
+assert.ok(marketNews.items.every(item=>item.contentKind!=="podcast_episode"));
 db.close();
-console.log("V3.0.5 SQLite migration, six reviewed episodes, evidence rules, ingestion, auth and review workflow passed.");
+console.log("V3.0.6 SQLite upgrade, legacy intelligence, discovery gating, metadata-only collection and coverage metrics passed.");
