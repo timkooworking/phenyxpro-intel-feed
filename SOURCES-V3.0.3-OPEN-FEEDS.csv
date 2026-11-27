@@ -1,0 +1,8 @@
+source_name,source_type,feed_url,user_test_http,user_test_items,max_items_per_run,feed_content_mode,status,permission_status,notes
+Gearnews,media,https://www.gearnews.com/feed/,,,40,article,active,existing_configured,Existing source retained
+Mix Online,media,https://www.mixonline.com/feed,,,40,article,active,existing_configured,Existing source retained
+AVNation,media,https://www.avnation.tv/feed/,,,40,article,active,existing_configured,Existing source retained
+Church Production,media,https://www.churchproduction.com/api/rss/content.rss,200,30,30,article,active,approved_public_feed,User tested public RSS; metadata only
+Production Expert,media,https://www.production-expert.com/production-expert-1?format=rss,200,20,20,article,active,approved_public_feed,Publisher promotes RSS reader use; metadata only
+Signal To Noise (Pro Sound Web Podcast),media,https://rss.buzzsprout.com/748181.rss,200,366,20,podcast_metadata,active,approved_public_feed,Latest 20 episodes; no audio or transcript fetch
+Church Sound Podcast,media,https://rss.buzzsprout.com/894865.rss,200,159,20,podcast_metadata,active,approved_public_feed,Latest 20 episodes; no audio or transcript fetch
