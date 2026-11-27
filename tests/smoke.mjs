@@ -22,7 +22,7 @@ class MockDB {
 const env = { FEED_TOKEN: 'test-token', DB: new MockDB() };
 const health = await worker.fetch(new Request('https://worker.test/health'), env);
 const healthJson = await health.json();
-assert(health.status === 200 && healthJson.version === '3.0.4', 'health version must be 3.0.4');
+assert(health.status === 200 && healthJson.version === '3.0.5', 'health version must be 3.0.5');
 assert(healthJson.translationEnabled === false, 'translation must remain disabled');
 assert(healthJson.features.redditStatus === 'pending_authorization', 'Reddit must remain pending authorization');
 
@@ -46,4 +46,4 @@ const retailBlocked = await worker.fetch(new Request('https://worker.test/api/ad
 }), env);
 assert(retailBlocked.status === 403, 'retail ingestion must be blocked until source authorization');
 
-console.log('V3.0.4 Worker smoke tests passed.');
+console.log('V3.0.5 Worker smoke tests passed.');
