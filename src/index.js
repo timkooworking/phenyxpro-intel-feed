@@ -4,8 +4,8 @@ const auth=(r,e)=>!!e.FEED_TOKEN&&r.headers.get("Authorization")===`Bearer ${e.F
 const dec=s=>(s||"").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,"$1").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'");
 const clean=s=>dec((s||"").replace(/<[^>]*>/g," ")).replace(/\s+/g," ").trim();
 function tag(b,n){for(const t of n){const m=b.match(new RegExp(`<${t}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${t}>`,"i"));if(m)return clean(m[1]);}return"";}
-function link(b){let m=b.match(/<link\b[^>]*href=["']([^"']+)["'][^>]*\/?>/i);if(m)return dec(m[1]);m=b.match(/<link(?:\s[^>]*)?>([\s\S]*?)<\/link>/i);if(m)return clean(m[1]);m=b.match(/<guid(?:\s[^>]*)?>([\s\S]*?)<\/guid>/i);return m?clean(m[1]):"";}
-function parse(xml){return(xml.match(/<(item|entry)\b[\s\S]*?<\/\1>/gi)||[]).map(b=>({title:tag(b,["title"]),url:link(b),date:tag(b,["pubDate","published","updated","dc:date"]),description:tag(b,["description","summary","content:encoded","content"])})).filter(x=>x.title&&x.url);}
+function link(b){let m=b.match(/<link\b[^>]*href=["']([^"']+)["'][^>]*\/?>/i);if(m)return dec(m[1]);m=b.match(/<link(?:\s[^>]*)?>([\s\S]*?)<\/link>/i);if(m)return clean(m[1]);m=b.match(/<guid(?:\s[^>]*)?>([\s\S]*?)<\/guid>/i);const guid=m?clean(m[1]):"";return /^https:\/\//i.test(guid)?guid:"";}
+function parse(xml){return(xml.match(/<(item|entry)\b[\s\S]*?<\/\1>/gi)||[]).map(b=>({title:tag(b,["title"]),url:link(b),date:tag(b,["pubDate","published","updated","dc:date"]),description:tag(b,["description","summary","content:encoded","content","itunes:summary","itunes:subtitle"])})).filter(x=>x.title&&x.url);}
 const BRANDS=[
 ["Phenyx Pro",["phenyx pro"]],["Shure",["shure"]],["Sennheiser",["sennheiser"]],["Audio-Technica",["audio-technica","audio technica"]],["RØDE",["røde","rode microphones","rode wireless"]],["Xvive",["xvive"]],["Hollyland",["hollyland"]],["Behringer",["behringer"]],["Allen & Heath",["allen & heath","allen and heath"]],["Maono",["maono"]],["TONOR",["tonor"]],["FIFINE",["fifine"]],["BOYA",["boya"]],["Comica",["comica"]],["SYNCO",["synco"]],["Saramonic",["saramonic"]],["Elgato",["elgato"]],["HyperX",["hyperx"]],["Yamaha",["yamaha"]],["Soundcraft",["soundcraft"]],["Mackie",["mackie"]],["AKG",["akg"]],["DPA",["dpa microphones","dpa microphone"]],["Electro-Voice",["electro-voice","electro voice"]],["JBL",["jbl professional","jbl pro audio"]],["QSC",["qsc"]],["Yorkville",["yorkville"]],["HK Audio",["hk audio"]],["Riedel",["riedel"]],["BishopSound",["bishopsound"]],["HEDD",["heddphone","hedd audio"]],["Focusrite",["focusrite"]],["Universal Audio",["universal audio"]],["PreSonus",["presonus"]],["Tascam",["tascam"]],["Crestron",["crestron"]]
 ];
@@ -97,13 +97,13 @@ async function analyze(item,env,scoreValue){
 const AUTHORIZED_FEED_PERMISSIONS=new Set(["existing_configured","approved_public_feed","licensed"]);
 const LEGACY_MEDIA_SOURCE_NAMES=new Set(["Gearnews","Mix Online","AVNation"]);
 async function sources(env){
-  const rows=await env.DB.prepare("SELECT id,source_name,source_type,feed_url,permission_status,status,priority FROM source_registry ORDER BY priority DESC").all();
+  const rows=await env.DB.prepare("SELECT id,source_name,source_type,feed_url,permission_status,status,priority,max_items_per_run,feed_content_mode FROM source_registry ORDER BY priority DESC").all();
   const byUrl=new Map(), legacyRegistry=new Map();
   for(const row of rows.results||[]){
     if(LEGACY_MEDIA_SOURCE_NAMES.has(row.source_name))legacyRegistry.set(row.source_name,row);
     if(row.status!=="active"||!AUTHORIZED_FEED_PERMISSIONS.has(row.permission_status))continue;
     if(!["media","brand_pr"].includes(row.source_type)||!/^https:\/\//i.test(row.feed_url||""))continue;
-    byUrl.set(row.feed_url,{id:row.id,name:row.source_name,url:row.feed_url,category:"Media & Retail",sourceType:row.source_type,priority:row.priority||50});
+    byUrl.set(row.feed_url,{id:row.id,name:row.source_name,url:row.feed_url,category:"Media & Retail",sourceType:row.source_type,priority:row.priority||50,maxItems:Number(row.max_items_per_run)||40,feedContentMode:row.feed_content_mode||"article"});
   }
   // Only registered, approved legacy sources may be present through the old config.
   // Unknown or disabled feed lines are deliberately ignored, not fetched.
@@ -112,7 +112,7 @@ async function sources(env){
     const reg=legacyRegistry.get(n);
     if(!reg||reg.status!=="active"||!AUTHORIZED_FEED_PERMISSIONS.has(reg.permission_status))continue;
     if(!u||!/^https:\/\//i.test(u)||u!==reg.feed_url)continue;
-    if(!byUrl.has(u))byUrl.set(u,{id:reg.id,name:reg.source_name,url:u,category:c||"Brand & Product",sourceType:"media",priority:reg.priority||50});
+    if(!byUrl.has(u))byUrl.set(u,{id:reg.id,name:reg.source_name,url:u,category:c||"Brand & Product",sourceType:"media",priority:reg.priority||50,maxItems:Number(reg.max_items_per_run)||40,feedContentMode:reg.feed_content_mode||"article"});
   }
   return [...byUrl.values()].sort((a,b)=>(b.priority||0)-(a.priority||0));
 }
@@ -169,17 +169,28 @@ function inspectFeedXml(xml){
   if(declared>0&&items.length===0)throw Error('Feed contains items but none have a parsable title and link');
   return{items,declared};
 }
+function selectNewestFeedItems(items,limit=40){
+  const cap=Math.min(Math.max(Number(limit)||40,1),100);
+  return [...(items||[])].sort((a,b)=>{
+    const ta=Date.parse(a.date||""),tb=Date.parse(b.date||"");
+    const va=Number.isFinite(ta),vb=Number.isFinite(tb);
+    if(va&&vb)return tb-ta;
+    if(va)return -1;
+    if(vb)return 1;
+    return 0;
+  }).slice(0,cap);
+}
 async function getFeedDocument(url){
-  const r=await fetch(url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/3.0.2 RSS reader", "Accept":"application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9"}});
+  const r=await fetch(url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/3.0.3 RSS reader", "Accept":"application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9"}});
   if(!r.ok)throw Error(`Feed HTTP ${r.status}`);
-  const maxBytes=2*1024*1024;
-  if(Number(r.headers.get('content-length')||0)>maxBytes)throw Error('Feed exceeds 2 MiB safety limit');
+  const maxBytes=5*1024*1024;
+  if(Number(r.headers.get('content-length')||0)>maxBytes)throw Error('Feed exceeds 5 MiB safety limit');
   const reader=r.body?.getReader();
   if(!reader)throw Error('Feed response has no readable body');
   const chunks=[];let total=0;
   for(;;){const {done,value}=await reader.read();if(done)break;
     total+=value.byteLength;
-    if(total>maxBytes){await reader.cancel();throw Error('Feed exceeds 2 MiB safety limit');}
+    if(total>maxBytes){await reader.cancel();throw Error('Feed exceeds 5 MiB safety limit');}
     chunks.push(value);
   }
   const bytes=new Uint8Array(total);let pos=0;
@@ -200,9 +211,9 @@ async function mediaActivationQueue(env){
     else if(!hasFeed){stage='feed_discovery';action='Request and verify the publisher feed or editorial distribution';}
     else if(x.status==='permission_required'||x.permission_status==='review_required'||!hasEvidence){stage='permission_review';action='Obtain and record permission for enterprise internal metadata monitoring';}
     else{stage='disabled';action='Review status and documented permission before activation';}
-    return{sourceId:x.id,sourceName:x.source_name,sourceType:x.source_type,feedUrl:x.feed_url||null,sourceStatus:x.status,permissionStatus:x.permission_status,hasPermissionReference:hasEvidence,stage,action,successfulRuns30Days:x.successfulRuns30Days,lastError:x.last_error||null};
+    return{sourceId:x.id,sourceName:x.source_name,sourceType:x.source_type,feedUrl:x.feed_url||null,sourceStatus:x.status,permissionStatus:x.permission_status,hasPermissionReference:hasEvidence,feedContentMode:x.feed_content_mode||"article",maxItemsPerRun:Number(x.max_items_per_run)||40,stage,action,successfulRuns30Days:x.successfulRuns30Days,lastError:x.last_error||null};
   });
-  return{version:'3.0.2',generatedAt:new Date().toISOString(),note:'Registration and Feed URL discovery do not constitute permission. No candidate URLs are automatically fetched.',summary:{mediaSources:rows.length,collecting:rows.filter(x=>x.stage==='collecting').length,awaitingPermission:rows.filter(x=>x.stage==='permission_review').length,awaitingFeed:rows.filter(x=>x.stage==='feed_discovery').length},sources:rows};
+  return{version:'3.0.3',generatedAt:new Date().toISOString(),note:'Registration and Feed URL discovery do not constitute permission. No candidate URLs are automatically fetched.',summary:{mediaSources:rows.length,collecting:rows.filter(x=>x.stage==='collecting').length,awaitingPermission:rows.filter(x=>x.stage==='permission_review').length,awaitingFeed:rows.filter(x=>x.stage==='feed_discovery').length},sources:rows};
 }
 // Explicit operator-requested preflight for ACTIVE + authorized publisher feeds only.
 // Endpoint never fetches permission-required or pending candidates and does not ingest articles.
@@ -226,7 +237,10 @@ async function collect(src,env,brandRules){
   let seen=0,added=0,events=0,candidates=0;
   try{
     const feed=await getFeedDocument(src.url);
-    const items=feed.items.slice(0,40);seen=items.length;
+    // Podcast RSS is treated as metadata only: title, short description, date and episode URL.
+    // The parser never reads or fetches <enclosure> audio URLs or transcripts.
+    const items=selectNewestFeedItems(feed.items,src.maxItems||40).map(item=>({...item,description:String(item.description||"").slice(0,src.feedContentMode==="podcast_metadata"?1000:1500)}));
+    seen=items.length;
     for(const item of items){
       const m=classify(item.title,item.description,src.name,brandRules),a=await analyze(item,env,m.relevance);
       const pub=item.date&&!Number.isNaN(Date.parse(item.date))?new Date(item.date).toISOString():start;
@@ -281,12 +295,12 @@ async function adminV3Summary(env){
     env.DB.prepare("SELECT COUNT(*) AS count FROM source_discovery WHERE status='needs_review'").first(),
     env.DB.prepare("SELECT COUNT(*) AS count FROM source_registry WHERE source_name='Reddit' AND status='pending_authorization'").first()
   ]);
-  return{version:"3.0.2",activeBrands:brands?.count||0,sourceStatus:sources.results||[],competitorEventsLast30Days:events?.count||0,retailObservations:retail?.count||0,discoveryCandidatesPending:discovery?.count||0,redditPendingAuthorization:!!reddit?.count};
+  return{version:"3.0.3",activeBrands:brands?.count||0,sourceStatus:sources.results||[],competitorEventsLast30Days:events?.count||0,retailObservations:retail?.count||0,discoveryCandidatesPending:discovery?.count||0,redditPendingAuthorization:!!reddit?.count};
 }
 // Source Monitor distinguishes registered candidates from actual collection evidence.
 async function sourceMonitor(env){
   const [r,runAgg,articleAgg]=await Promise.all([
-    env.DB.prepare("SELECT id,source_name,source_type,website_url,feed_url,access_method,permission_status,permission_reference,status,priority,notes,last_checked_at,last_success_at,last_error FROM source_registry ORDER BY priority DESC,source_name ASC").all(),
+    env.DB.prepare("SELECT id,source_name,source_type,website_url,feed_url,access_method,permission_status,permission_reference,status,priority,notes,last_checked_at,last_success_at,last_error,max_items_per_run,feed_content_mode FROM source_registry ORDER BY priority DESC,source_name ASC").all(),
     env.DB.prepare(`SELECT source_name,COUNT(*) AS total_runs,
       SUM(CASE WHEN datetime(started_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END) AS runs_30d,
       SUM(CASE WHEN status='success' AND datetime(started_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END) AS successes_30d,
@@ -313,7 +327,7 @@ async function sourceMonitor(env){
       articlesInDatabase:Number(article.article_count||0),articlesCollected30Days:Number(article.articles_collected_30d||0),
       articlesAddedByRuns:Number(run.articles_added_total||0)};
   });
-  return{version:'3.0.2',generatedAt:new Date().toISOString(),scope:'registered_sources_only',
+  return{version:'3.0.3',generatedAt:new Date().toISOString(),scope:'registered_sources_only',
     note:'Registered != enabled; collecting requires successful recent source_runs. Retail and community collectors are disabled.',sources:items};
 }
 // This is OBSERVED COVERAGE across ingested articles/events, not brand market share.
@@ -339,7 +353,7 @@ async function brandCoverage(env){
       FROM competitor_events GROUP BY brand_name
     ) e ON e.brand_name=b.brand_name
     WHERE b.status='active' ORDER BY b.priority DESC,b.brand_name ASC`).all();
-  return{version:'3.0.2',generatedAt:new Date().toISOString(),scope:'ingested_article_and_event_data_only',
+  return{version:'3.0.3',generatedAt:new Date().toISOString(),scope:'ingested_article_and_event_data_only',
     note:'Zero indicates no matched record in current monitored samples; it does NOT mean the brand had no releases or market activity.',
     brands:rows.results||[]};
 }
@@ -356,7 +370,7 @@ async function adminV3Routes(req,env,u){
   if(path==="/api/admin/v3/source-feed-checks"&&req.method==="GET"){
     const n=Math.min(Math.max(Number(new URL(req.url).searchParams.get('limit'))||30,1),100);
     const r=await env.DB.prepare('SELECT source_name,checked_at,success,http_status,parsed_items,error_message FROM source_feed_checks ORDER BY checked_at DESC LIMIT ?').bind(n).all();
-    return j({version:'3.0.2',checks:r.results||[]});
+    return j({version:'3.0.3',checks:r.results||[]});
   }
   if(path==="/api/admin/v3/brand-coverage"&&req.method==="GET")return j(await brandCoverage(env));
   if(path==="/api/admin/v3/summary"&&req.method==="GET")return j(await adminV3Summary(env));
@@ -439,7 +453,7 @@ async function adminV3Routes(req,env,u){
   return j({error:"V3 admin route not found"},404);
 }
 
-async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:"3.0.2",translationEnabled:false,contentLanguage:"en-original",features:{brandWatchlist:true,sourceRegistry:true,retailDataAuthorizationGated:true,redditStatus:"pending_authorization"},time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
+async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:"3.0.3",translationEnabled:false,contentLanguage:"en-original",features:{brandWatchlist:true,sourceRegistry:true,retailDataAuthorizationGated:true,redditStatus:"pending_authorization",openMediaExpansion:true,podcastAudioFetch:false},time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
   if(!auth(req,env))return j({error:"Unauthorized"},401);
   const raw=Number(u.searchParams.get('min_score')??0);
   const min=Number.isFinite(raw)?Math.min(Math.max(raw,0),100):0;
@@ -461,7 +475,7 @@ async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS
     evidence:x.evidence?JSON.parse(x.evidence):[],analysisStatus:x.analysis_status
   }));
   const totalMatching=counts?.matching||0;
-  return j({generatedAt:new Date().toISOString(),mode:'LIVE',version:'3.0.2',translationEnabled:false,contentLanguage:'en-original',minRelevanceScore:min,
+  return j({generatedAt:new Date().toISOString(),mode:'LIVE',version:'3.0.3',translationEnabled:false,contentLanguage:'en-original',minRelevanceScore:min,
     totalArticles:counts?.total||0,totalMatching,returned:items.length,offset,limit,
     hasMore:offset+items.length<totalMatching,nextOffset:offset+items.length,items});
 }
@@ -474,4 +488,5 @@ if(u.pathname.startsWith("/api/admin/v3/")){
   return adminV3Routes(req,env,u);
 }
 if(u.pathname==="/api/admin/run-collection"&&req.method==="POST"){if(!auth(req,env))return j({error:"Unauthorized"},401);return j(await runCollection(env));}if(u.pathname==="/api/admin/reclassify"&&req.method==="POST"){if(!auth(req,env))return j({error:"Unauthorized"},401);return j(await reclassify(env,u.searchParams.get("limit")||100));}if(u.pathname==="/api/admin/source-runs"&&req.method==="GET"){if(!auth(req,env))return j({error:"Unauthorized"},401);const r=await env.DB.prepare("SELECT * FROM source_runs ORDER BY started_at DESC LIMIT 100").all();return j({runs:r.results||[]});}if(u.pathname==="/api/admin/summary"&&req.method==="GET"){if(!auth(req,env))return j({error:"Unauthorized"},401);const r=await env.DB.prepare("SELECT market_pillar,category,COUNT(*) AS total,AVG(relevance_score) AS avg_relevance,SUM(CASE WHEN relevance_score>=35 THEN 1 ELSE 0 END) AS relevant FROM articles GROUP BY market_pillar,category ORDER BY total DESC").all();return j({summary:r.results||[]});}return j({error:"Not found"},404);}
+export const __test={parse,inspectFeedXml,selectNewestFeedItems,collect};
 export default{fetch(req,env){return handle(req,env).catch(e=>j({error:"Internal server error",detail:String(e).slice(0,300)},500));},scheduled(_event,env,ctx){ctx.waitUntil(runCollection(env));}};
