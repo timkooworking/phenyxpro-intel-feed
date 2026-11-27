@@ -1,7 +1,9 @@
 import { hasPhrase, recordIntelligence } from "./intelligence.js";
 import { intelligenceAdmin, intelligenceCounts } from "./intelligence-admin.js";
 
-const VERSION = "3.0.5";
+const VERSION = "3.0.6";
+const PODCAST_EXISTS = 'EXISTS (SELECT 1 FROM podcast_episodes p WHERE p.article_id=articles.id)';
+const MARKET_NEWS_MIN_SCORE = 35;
 const CORS={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET,POST,OPTIONS","Access-Control-Allow-Headers":"Authorization,Content-Type"};
 const j=(d,s=200)=>new Response(JSON.stringify(d,null,2),{status:s,headers:{"Content-Type":"application/json; charset=utf-8",...CORS}});
 const auth=(r,e)=>!!e.FEED_TOKEN&&r.headers.get("Authorization")===`Bearer ${e.FEED_TOKEN}`;
@@ -25,11 +27,21 @@ function buzzsproutEpisodePage(itemXml, feedUrl, title){
   return `https://www.buzzsprout.com/${show[1]}/episodes/${episode[1]}${slug?"-"+slug:""}`;
 }
 function parse(xml,options={}){
-  return(xml.match(/<(item|entry)\b[\s\S]*?<\/\1>/gi)||[]).map(b=>{
+  const metadataOnly=options.feedContentMode==="editorial_metadata";
+  const items=(xml.match(/<(item|entry)\b[\s\S]*?<\/\1>/gi)||[]).map(b=>{
     const title=tag(b,["title","itunes:title"]);
     const url=link(b)||(options.feedContentMode==="podcast_metadata"?buzzsproutEpisodePage(b,options.feedUrl,title):"");
-    return{title,url,date:tag(b,["pubDate","published","updated","dc:date"]),description:tag(b,["description","summary","content:encoded","content","itunes:summary","itunes:subtitle"])};
+    return{title,url,date:tag(b,["pubDate","published","updated","dc:date"]),description:metadataOnly?"":tag(b,["description","summary","content:encoded","content","itunes:summary","itunes:subtitle"])};
   }).filter(x=>x.title&&x.url);
+  if(!metadataOnly)return items;
+  const origin=new URL(options.feedUrl).origin;
+  return items.filter(item=>{
+    const articleUrl=URL.canParse(item.url)?new URL(item.url):null;
+    if(articleUrl?.origin!==origin||articleUrl.username||articleUrl.password||!Number.isFinite(Date.parse(item.date)))return false;
+    // The two existing podcast feeds already cover these episode announcements.
+    return options.sourceId!=="src-prosoundweb"||
+      !/^(?:signal to noise|church sound podcast)[,:\s–—-]+(?:podcast[,:\s–—-]+)?(?:episode\b|ep\.?\s*\d|#\d)/i.test(item.title);
+  });
 }
 const BRANDS=[
 ["Phenyx Pro",["phenyx pro"]],["Shure",["shure"]],["Sennheiser",["sennheiser"]],["Audio-Technica",["audio-technica","audio technica"]],["RØDE",["røde","rode microphones","rode wireless"]],["Xvive",["xvive"]],["Hollyland",["hollyland"]],["Behringer",["behringer"]],["Allen & Heath",["allen & heath","allen and heath"]],["Maono",["maono"]],["TONOR",["tonor"]],["FIFINE",["fifine"]],["BOYA",["boya"]],["Comica",["comica"]],["SYNCO",["synco"]],["Saramonic",["saramonic"]],["Elgato",["elgato"]],["HyperX",["hyperx"]],["Yamaha",["yamaha"]],["Soundcraft",["soundcraft"]],["Mackie",["mackie"]],["AKG",["akg"]],["DPA",["dpa microphones","dpa microphone"]],["Electro-Voice",["electro-voice","electro voice"]],["JBL",["jbl professional","jbl pro audio"]],["QSC",["qsc"]],["Yorkville",["yorkville"]],["HK Audio",["hk audio"]],["Riedel",["riedel"]],["BishopSound",["bishopsound"]],["HEDD",["heddphone","hedd audio"]],["Focusrite",["focusrite"]],["Universal Audio",["universal audio"]],["PreSonus",["presonus"]],["Tascam",["tascam"]],["Crestron",["crestron"]]
@@ -70,7 +82,8 @@ function classify(title,desc,source="",brandRules=BRANDS.map(([name,aliases])=>(
   const priority=phenyx||(relevance>=80&&["New Product","Product Upgrade","Business Data","Campaign"].includes(type))?"High":relevance>=55?"Medium":"Low";
   return{brand,competitorTier:brandRule?.tier||"unclassified",pillar,relevance,category,priority,type,prod,model,phenyx,evidence:[...p.m.map(x=>"pro:"+x),...w.m.map(x=>"worship:"+x),...c.m.map(x=>"creator:"+x),...(brand?["brand:"+brand,"tier:"+(brandRule?.tier||"unclassified")]:[]),...(neg?["negative:low-relevance-context"]:[])]};
 }
-async function analyze(item,env,scoreValue){
+async function analyze(item,env,scoreValue,metadataOnly=false){
+  if(metadataOnly)return {summary:"",analysis:"Rules-based classification using the original headline.",confidence:"Unreviewed",sentiment:"Unknown",status:"rules_classified"};
   // Preserve the RSS-provided English summary. AI is used only for market analysis, never translation.
   const originalSummary=clean(item.description||item.title).slice(0,1200);
   if(scoreValue<60||!env.AI_API_URL||!env.AI_API_KEY||!env.AI_MODEL){
@@ -106,7 +119,8 @@ async function analyze(item,env,scoreValue){
 // Feed collection is permission-gated. Registry entries alone never activate a source.
 // Legacy RSS_FEEDS is respected only for the three production feeds already
 // registered and authorized in V3.0; it cannot bypass a disabled registry row.
-const AUTHORIZED_FEED_PERMISSIONS=new Set(["existing_configured","approved_public_feed","licensed"]);
+const EDITORIAL_METADATA_PERMISSION="approved_public_editorial_metadata";
+const AUTHORIZED_FEED_PERMISSIONS=new Set(["existing_configured","approved_public_feed","licensed",EDITORIAL_METADATA_PERMISSION]);
 const LEGACY_MEDIA_SOURCE_NAMES=new Set(["Gearnews","Mix Online","AVNation"]);
 async function sources(env){
   const rows=await env.DB.prepare("SELECT id,source_name,source_type,feed_url,permission_status,status,priority,max_items_per_run,feed_content_mode FROM source_registry ORDER BY priority DESC").all();
@@ -174,7 +188,11 @@ function selectNewestFeedItems(items,limit=40){
   }).slice(0,cap);
 }
 async function getFeedDocument(url,options={}){
-  const r=await fetch(url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/3.0.5 RSS reader", "Accept":"application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9"}});
+  const metadataOnly=options.feedContentMode==="editorial_metadata";
+  const r=await fetch(url,{
+    ...(metadataOnly?{redirect:"error"}:{}),
+    headers:{"User-Agent":`PhenyxProMarketIntelligence/${metadataOnly?VERSION:"3.0.5"} RSS reader`, "Accept":"application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9"}
+  });
   if(!r.ok)throw Error(`Feed HTTP ${r.status}`);
   const maxBytes=5*1024*1024;
   if(Number(r.headers.get('content-length')||0)>maxBytes)throw Error('Feed exceeds 5 MiB safety limit');
@@ -205,6 +223,7 @@ async function mediaActivationQueue(env){
     else if(!hasFeed){stage='feed_discovery';action='Request and verify the publisher feed or editorial distribution';}
     else if(x.status==='permission_required'||x.permission_status==='review_required'||!hasEvidence){stage='permission_review';action='Obtain and record permission for enterprise internal metadata monitoring';}
     else{stage='disabled';action='Review status and documented permission before activation';}
+    if(x.status==='needs_verification'&&x.access_method==='open_media_review')action=x.notes;
     return{sourceId:x.id,sourceName:x.source_name,sourceType:x.source_type,feedUrl:x.feed_url||null,sourceStatus:x.status,permissionStatus:x.permission_status,hasPermissionReference:hasEvidence,feedContentMode:x.feed_content_mode||"article",maxItemsPerRun:Number(x.max_items_per_run)||40,stage,action,successfulRuns30Days:x.successfulRuns30Days,lastError:x.last_error||null};
   });
   return{version:VERSION,generatedAt:new Date().toISOString(),note:'Registration and Feed URL discovery do not constitute permission. No candidate URLs are automatically fetched.',summary:{mediaSources:rows.length,collecting:rows.filter(x=>x.stage==='collecting').length,awaitingPermission:rows.filter(x=>x.stage==='permission_review').length,awaitingFeed:rows.filter(x=>x.stage==='feed_discovery').length},sources:rows};
@@ -219,7 +238,7 @@ async function checkAuthorizedFeed(env,id){
   if(!/^https:\/\//i.test(source.feed_url||''))return{status:400,body:{error:'Source has no registered HTTPS feed URL'}};
   const now=new Date().toISOString(),idCheck=crypto.randomUUID();
   let httpStatus=null,parsedItems=0,ok=false,error=null;
-  try{const result=await getFeedDocument(source.feed_url,{feedContentMode:source.feed_content_mode||"article"});httpStatus=result.httpStatus;parsedItems=result.items.length;ok=true;}
+  try{const result=await getFeedDocument(source.feed_url,{feedContentMode:source.feed_content_mode||"article",sourceId:source.id});httpStatus=result.httpStatus;parsedItems=result.items.length;ok=true;}
   catch(e){error=String(e?.message||e).slice(0,300);const match=error.match(/^Feed HTTP (\d{3})/);httpStatus=Number(e?.httpStatus)||(match?Number(match[1]):null);}
   await env.DB.prepare('INSERT INTO source_feed_checks (id,source_id,source_name,checked_at,success,http_status,parsed_items,error_message) VALUES (?,?,?,?,?,?,?,?)').bind(idCheck,source.id,source.source_name,now,ok?1:0,httpStatus,parsedItems,error).run();
   await env.DB.prepare('UPDATE source_registry SET last_checked_at=?,last_error=?,updated_at=? WHERE id=?').bind(now,error,now,source.id).run();
@@ -230,13 +249,13 @@ async function collect(src,env,brandRules){
   await env.DB.prepare("INSERT INTO source_runs (id,source_name,started_at,status) VALUES (?,?,?,?)").bind(id,src.name,start,"running").run();
   let seen=0,added=0,events=0,candidates=0;
   try{
-    const feed=await getFeedDocument(src.url,{feedContentMode:src.feedContentMode||"article"});
+    const feed=await getFeedDocument(src.url,{feedContentMode:src.feedContentMode||"article",sourceId:src.id});
     // Podcast RSS is treated as metadata only: title, short description, date and episode URL.
     // The parser never reads or fetches <enclosure> audio URLs or transcripts.
     const items=selectNewestFeedItems(feed.items,src.maxItems||40).map(item=>({...item,description:String(item.description||"").slice(0,src.feedContentMode==="podcast_metadata"?1000:1500)}));
     seen=items.length;
     for(const item of items){
-      const m=classify(item.title,item.description,src.name,brandRules),a=await analyze(item,env,m.relevance);
+      const m=classify(item.title,item.description,src.name,brandRules),a=await analyze(item,env,m.relevance,src.feedContentMode==="editorial_metadata");
       const podcast=src.feedContentMode==="podcast_metadata";
       const pub=item.date&&!Number.isNaN(Date.parse(item.date))?new Date(item.date).toISOString():start;
       const articleId=crypto.randomUUID();
@@ -307,6 +326,10 @@ async function sourceMonitor(env){
       FROM source_runs GROUP BY source_name`).all(),
     env.DB.prepare(`SELECT source_name,COUNT(*) AS article_count,
       SUM(CASE WHEN datetime(collected_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END) AS articles_collected_30d,
+      SUM(CASE WHEN datetime(published_at) BETWEEN datetime('now','-30 days') AND datetime('now')
+        AND NOT ${PODCAST_EXISTS} THEN 1 ELSE 0 END) AS news_30d,
+      SUM(CASE WHEN datetime(published_at) BETWEEN datetime('now','-30 days') AND datetime('now')
+        AND NOT ${PODCAST_EXISTS} AND relevance_score>=${MARKET_NEWS_MIN_SCORE} THEN 1 ELSE 0 END) AS qualified_news_30d,
       MAX(collected_at) AS last_article_collected_at
       FROM articles GROUP BY source_name`).all()
   ]);
@@ -315,16 +338,23 @@ async function sourceMonitor(env){
   const items=(r.results||[]).map(x=>{
     const run=runs.get(x.source_name)||{},article=articles.get(x.source_name)||{};
     const eligible=x.status==='active'&&AUTHORIZED_FEED_PERMISSIONS.has(x.permission_status)&&["media","brand_pr"].includes(x.source_type)&&!!x.feed_url;
-    const runs30=Number(run.runs_30d||0),ok30=Number(run.successes_30d||0);
+    const runs30=Number(run.runs_30d||0),ok30=Number(run.successes_30d||0),failed30=Number(run.failures_30d||0);
+    const completedRuns=ok30+failed30;
+    const news30=Number(article.news_30d||0),qualified30=Number(article.qualified_news_30d||0);
+    const qualityScore=eligible&&completedRuns>0&&news30>0&&x.feed_content_mode!=="podcast_metadata"
+      ? Math.round(50*ok30/completedRuns+50*qualified30/news30) : null;
     return {...x,collectorEligible:eligible,
       collectionStatus:eligible?(ok30>0?'collecting':(runs30>0?'error_or_no_success':'awaiting_first_run')):'not_enabled',
-      runs30Days:runs30,successfulRuns30Days:ok30,failedRuns30Days:Number(run.failures_30d||0),
+      runs30Days:runs30,successfulRuns30Days:ok30,failedRuns30Days:failed30,
       latestRunAt:run.latest_run_at||null,latestSuccessfulRunAt:run.latest_success_at||x.last_success_at||null,
       articlesInDatabase:Number(article.article_count||0),articlesCollected30Days:Number(article.articles_collected_30d||0),
-      articlesAddedByRuns:Number(run.articles_added_total||0)};
+      articlesAddedByRuns:Number(run.articles_added_total||0),
+      qualityScore,newsPublished30Days:news30,marketNewsQualified30Days:qualified30};
   });
   return{version:VERSION,generatedAt:new Date().toISOString(),scope:'registered_sources_only',
-    note:'Registered != enabled; collecting requires successful recent source_runs. Retail and community collectors are disabled.',sources:items};
+    note:'Registered != enabled; collecting requires successful recent source_runs. Retail and community collectors are disabled.',
+    qualityScoreMethod:'30-day scale 0–100, half completed-run success rate and half share of published non-podcast articles at relevance >=35. Requires both samples from an enabled editorial source.',
+    sources:items};
 }
 // This is OBSERVED COVERAGE across ingested articles/events, not brand market share.
 async function brandCoverage(env){
@@ -333,6 +363,9 @@ async function brandCoverage(env){
       COALESCE(a.article_count,0) AS matched_articles,
       COALESCE(a.sources_count,0) AS observed_source_count,
       COALESCE(a.articles_30d,0) AS matched_articles_30d,
+      COALESCE(a.qualified_news_30d,0) AS market_news_articles_30d,
+      COALESCE(a.qualified_sources_30d,0) AS market_news_sources_30d,
+      COALESCE(a.podcast_episodes_30d,0) AS matched_podcast_episodes_30d,
       a.last_published_at,
       COALESCE(e.events_count,0) AS events_count,
       COALESCE(e.events_30d,0) AS events_30d
@@ -340,8 +373,16 @@ async function brandCoverage(env){
     LEFT JOIN (
       SELECT brand, COUNT(*) AS article_count,COUNT(DISTINCT source_name) AS sources_count,
         SUM(CASE WHEN datetime(published_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END) AS articles_30d,
+        COUNT(CASE WHEN recent AND NOT is_podcast AND relevance_score>=${MARKET_NEWS_MIN_SCORE} THEN 1 END) AS qualified_news_30d,
+        COUNT(DISTINCT CASE WHEN recent AND NOT is_podcast AND relevance_score>=${MARKET_NEWS_MIN_SCORE} THEN source_name END) AS qualified_sources_30d,
+        COUNT(CASE WHEN recent AND is_podcast THEN 1 END) AS podcast_episodes_30d,
         MAX(published_at) AS last_published_at
-      FROM articles WHERE brand IS NOT NULL AND brand!='' GROUP BY brand
+      FROM (
+        SELECT brand,source_name,published_at,relevance_score,
+          datetime(published_at) BETWEEN datetime('now','-30 days') AND datetime('now') AS recent,
+          ${PODCAST_EXISTS} AS is_podcast
+        FROM articles WHERE brand IS NOT NULL AND brand!=''
+      ) GROUP BY brand
     ) a ON a.brand=b.brand_name
     LEFT JOIN (
       SELECT brand_name,COUNT(*) AS events_count,
@@ -349,9 +390,12 @@ async function brandCoverage(env){
       FROM intelligence_event_history WHERE intelligence_class='actionable' GROUP BY brand_name
     ) e ON e.brand_name=b.brand_name
     WHERE b.status='active' ORDER BY b.priority DESC,b.brand_name ASC`).all();
+  const brands=rows.results||[];
+  const coveredBrands=brands.filter(brand=>Number(brand.market_news_articles_30d)>0).length;
   return{version:VERSION,generatedAt:new Date().toISOString(),scope:'ingested_article_and_event_data_only',
     note:'Zero indicates no matched record in current monitored samples; it does NOT mean the brand had no releases or market activity.',
-    brands:rows.results||[]};
+    marketNewsCoverage30Days:{activeBrands:brands.length,coveredBrands,uncoveredBrands:brands.length-coveredBrands},
+    brands};
 }
 
 async function adminV3Routes(req,env,u){
@@ -456,8 +500,8 @@ async function adminV3Routes(req,env,u){
 
 async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:VERSION,translationEnabled:false,contentLanguage:"en-original",features:{brandWatchlist:true,sourceRegistry:true,retailDataAuthorizationGated:true,redditStatus:"pending_authorization",openMediaExpansion:true,podcastAudioFetch:false,intelligenceQuality:true,podcastExcludedFromBriefingByDefault:true},time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
   if(!auth(req,env))return j({error:"Unauthorized"},401);
-  const raw=Number(u.searchParams.get('min_score')??35);
-  const min=Number.isFinite(raw)?Math.min(Math.max(raw,0),100):35;
+  const raw=Number(u.searchParams.get('min_score')??MARKET_NEWS_MIN_SCORE);
+  const min=Number.isFinite(raw)?Math.min(Math.max(raw,0),100):MARKET_NEWS_MIN_SCORE;
   const requested=Number(u.searchParams.get('limit')||100);
   const limit=Number.isFinite(requested)?Math.min(Math.max(Math.floor(requested),1),200):100;
   const requestedOffset=Number(u.searchParams.get('offset')||0);
@@ -466,7 +510,7 @@ async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS
   // Market News is podcast-free by default. Podcast episodes remain available
   // through the dedicated intelligence endpoints or explicit include_podcasts=1.
   const includePodcasts=['1','true','yes'].includes(String(u.searchParams.get('include_podcasts')||'').toLowerCase());
-  const podcastExists='EXISTS (SELECT 1 FROM podcast_episodes p WHERE p.article_id=articles.id)';
+  const podcastExists=PODCAST_EXISTS;
   const podcastFilter=includePodcasts?'':` AND NOT ${podcastExists}`;
   const orderBy=sort==='score'?'relevance_score DESC,published_at DESC,id':'published_at DESC,collected_at DESC,id';
   const r=await env.DB.prepare(`SELECT id,title,source_name,published_at,category,priority,brand,summary,analysis,confidence,content_type,sentiment,is_phenyx_mention,canonical_url,relevance_score,market_pillar,product_family,model,evidence,analysis_status,
