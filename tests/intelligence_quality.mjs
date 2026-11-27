@@ -158,7 +158,17 @@ assert.deepEqual({...summary.intelligence},{
   actionableEvents:0,legacyNonPodcastEvents:7,reclassifiedPodcastRecords:35
 });
 assert.equal((await request(api + "podcast-episodes?source=" + encodeURIComponent(church))).episodes.length,20);
-assert.equal((await request(api + "podcast-episodes")).episodes.length,40);
+const podcastEpisodes = (await request(api + "podcast-episodes?sort=score")).episodes;
+assert.equal(podcastEpisodes.length,40);
+const interviewEpisode = podcastEpisodes.find(row=>row.title.startsWith("337."));
+assert.equal(interviewEpisode.podcast_quality,"interview_or_discussion");
+assert.ok(interviewEpisode.relevance_score<=20);
+assert.ok(interviewEpisode.original_relevance_score>=interviewEpisode.relevance_score);
+const tutorialEpisode = podcastEpisodes.find(row=>row.title.includes("Quickly Troubleshooting"));
+if (tutorialEpisode) assert.ok(tutorialEpisode.relevance_score<=25);
+const reviewEpisode = podcastEpisodes.find(row=>row.title.startsWith("324."));
+assert.equal(reviewEpisode.podcast_quality,"needs_review");
+assert.ok(reviewEpisode.relevance_score<=35);
 assert.equal((await request(api + "brand-mentions?brand=Shure&limit=10&offset=20")).mentions.length,9);
 assert.equal((await request(api + "industry-discussions")).discussions.length,5);
 assert.equal((await request(api + "events")).events.length,0);
@@ -169,13 +179,22 @@ for (const route of ["podcast-episodes","brand-mentions","industry-discussions",
 }
 await request(api + "review-queue/resolve",401,{id:"unknown"},false);
 const briefing = await request("/api/briefing.json");
-assert.equal(briefing.totalArticles,139);
+assert.equal(briefing.totalArticles,99);
+assert.equal(briefing.totalAllArticles,139);
+assert.equal(briefing.totalPodcastEpisodes,40);
+assert.equal(briefing.podcastsIncluded,false);
 assert.equal(briefing.minRelevanceScore,35);
 assert.ok(briefing.items.every((item,i,items)=>item.relevanceScore>=35 &&
+  item.contentKind !== "podcast_episode" &&
   (!i || items[i-1].relevanceScore >= item.relevanceScore)));
-assert.equal(briefing.items.find(x=>x.title.startsWith("324.")).contentType,"Podcast Episode");
+assert.ok(!briefing.items.some(x=>x.title.startsWith("324.")));
 const unfiltered = await request("/api/briefing.json?min_score=0&sort=date");
-assert.equal(unfiltered.totalMatching,139);
+assert.equal(unfiltered.totalMatching,99);
+const allContent = await request("/api/briefing.json?include_podcasts=1");
+assert.equal(allContent.totalArticles,139);
+assert.equal(allContent.totalMatching,36);
+assert.equal(allContent.podcastsIncluded,true);
+assert.equal(allContent.items.find(x=>x.title.startsWith("324.")).contentType,"Podcast Episode");
 const oldQueue = (await request(api + "review-queue")).reviews[0];
 assert.equal(oldQueue.original_event_type,"PRODUCT_UPGRADE");
 assert.match(oldQueue.source_url,/19033615/);
@@ -188,7 +207,7 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = async input => {
   const podcast = String(input).includes("podcast");
   const items = podcast ? [
-    ["Interview: mixing tips","Shure supplies microphones to the show. Allen &amp; Heath mixers were mentioned."],
+    ["How to troubleshoot a Shure wireless system","Basic tutorial: tips for setup and troubleshooting. Allen &amp; Heath mixers are mentioned."],
     ["Product bulletin","Shure launches AX90 wireless microphone."],
     ["Show archive","No known mentions."]
   ] : [["Shure Launches AX90 wireless microphone","Product announcement."]];
@@ -210,7 +229,12 @@ try {
 } finally {
   globalThis.fetch = realFetch;
 }
-assert.equal((await request(api+"podcast-episodes")).episodes.length,43);
+const postCollectEpisodes = (await request(api+"podcast-episodes")).episodes;
+assert.equal(postCollectEpisodes.length,43);
+const basicTutorial = postCollectEpisodes.find(row=>row.title.startsWith("How to troubleshoot"));
+assert.equal(basicTutorial.podcast_quality,"basic_education");
+assert.ok(basicTutorial.relevance_score<=25);
+assert.ok(basicTutorial.original_relevance_score>=basicTutorial.relevance_score);
 assert.equal((await request(api+"brand-mentions")).mentions.length,31);
 const events = (await request(api+"events")).events;
 assert.equal(events.length,1);
@@ -237,4 +261,4 @@ const backfill = await request(api+"backfill-events?limit=200",200,{});
 assert.equal(backfill.eventsAdded,0);
 assert.equal((await request(api+"events?scope=all")).events.length,44);
 db.close();
-console.log("V3.0.4 SQLite migration, six reviewed episodes, evidence rules, ingestion, auth and review workflow passed.");
+console.log("V3.0.5 SQLite migration, six reviewed episodes, evidence rules, ingestion, auth and review workflow passed.");
