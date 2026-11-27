@@ -1,5 +1,7 @@
 # Phenyx Pro Market Intelligence — Shared Feed Backend
 
+> Current release: **V3.0.5**. The default `/api/briefing.json` feed excludes podcast episodes; podcast metadata remains available through separate authenticated intelligence endpoints. See `README-V3.0.5-ZH.md`.
+
 Cloudflare Workers + D1 starter backend for the Chrome extension. Intended for a 30+ person shared team deployment.
 
 ## What this package provides
