@@ -46,4 +46,21 @@ assert DB.execute("SELECT COUNT(*) FROM source_feed_checks").fetchone()[0] == 0
 assert DB.execute("SELECT COUNT(*) FROM articles").fetchone()[0] == 1
 assert DB.execute("SELECT COUNT(*) FROM source_registry WHERE source_type IN ('media','brand_pr') AND status='active'").fetchone()[0] == 3
 assert DB.execute("SELECT status FROM source_registry WHERE source_name='Reddit'").fetchone()[0] == 'pending_authorization'
-print("V3.0.2 migration smoke test passed; existing data, brand list and permissions preserved.")
+DB.executescript((ROOT / "migrations" / "0008_open_media_expansion.sql").read_text(encoding="utf-8"))
+assert DB.execute("SELECT COUNT(*) FROM articles").fetchone()[0] == 1
+assert DB.execute("SELECT COUNT(*) FROM brand_watchlist WHERE status='active'").fetchone()[0] == 41
+assert DB.execute("SELECT COUNT(*) FROM competitor_events").fetchone()[0] == 0
+assert DB.execute("SELECT COUNT(*) FROM source_registry WHERE source_type='retailer' AND status='permission_required'").fetchone()[0] == 6
+assert DB.execute("SELECT status FROM source_registry WHERE source_name='Reddit'").fetchone()[0] == 'pending_authorization'
+expected = {
+    'Church Production': (30, 'article', 'https://www.churchproduction.com/api/rss/content.rss'),
+    'Production Expert': (20, 'article', 'https://www.production-expert.com/production-expert-1?format=rss'),
+    'Signal To Noise (Pro Sound Web Podcast)': (20, 'podcast_metadata', 'https://rss.buzzsprout.com/748181.rss'),
+    'Church Sound Podcast': (20, 'podcast_metadata', 'https://rss.buzzsprout.com/894865.rss'),
+}
+for name, (cap, mode, url) in expected.items():
+    row = DB.execute("SELECT status,permission_status,max_items_per_run,feed_content_mode,feed_url FROM source_registry WHERE source_name=?", (name,)).fetchone()
+    assert row == ('active','approved_public_feed',cap,mode,url), (name,row)
+assert DB.execute("SELECT COUNT(*) FROM source_registry WHERE status='active' AND source_type='media'").fetchone()[0] == 7
+assert DB.execute("SELECT COUNT(*) FROM source_registry WHERE source_type='retailer' AND status='active'").fetchone()[0] == 0
+print("V3.0.3 migration smoke test passed; existing data, brand list, retailers and Reddit permissions preserved.")
