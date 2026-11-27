@@ -31,7 +31,7 @@ const request=(url,init={})=>worker.fetch(new Request('https://worker.test'+url,
 const unauth=await worker.fetch(new Request('https://worker.test/api/admin/v3/media-activation'),env);
 assert(unauth.status===401,'activation queue requires token');
 const q=await request('/api/admin/v3/media-activation');const list=await q.json();
-assert(q.status===200&&list.version==='3.0.5','queue returned');
+assert(q.status===200&&list.version==='3.0.6','queue returned');
 assert(list.sources.length===3,'community excluded from media queue');
 assert(list.sources.find(x=>x.sourceName==='Church Production').stage==='permission_review','candidate remains unapproved');
 assert(list.sources.find(x=>x.sourceName==='Gearnews').stage==='collecting','historical success shown');
@@ -54,4 +54,4 @@ try{
   const checks=await request('/api/admin/v3/source-feed-checks');const cj=await checks.json();
   assert(checks.status===200&&cj.checks.length===2&&cj.checks[0].success===0,'feed-check audit history saved');
 } finally {globalThis.fetch=real;}
-console.log('V3.0.5 media activation queue, protected feed checks, and HTML failure tests passed.');
+console.log('V3.0.6 media activation queue, protected feed checks, and HTML failure tests passed.');
