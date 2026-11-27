@@ -1,7 +1,7 @@
 import { hasPhrase, recordIntelligence } from "./intelligence.js";
 import { intelligenceAdmin, intelligenceCounts } from "./intelligence-admin.js";
 
-const VERSION = "3.0.4";
+const VERSION = "3.0.5";
 const CORS={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET,POST,OPTIONS","Access-Control-Allow-Headers":"Authorization,Content-Type"};
 const j=(d,s=200)=>new Response(JSON.stringify(d,null,2),{status:s,headers:{"Content-Type":"application/json; charset=utf-8",...CORS}});
 const auth=(r,e)=>!!e.FEED_TOKEN&&r.headers.get("Authorization")===`Bearer ${e.FEED_TOKEN}`;
@@ -174,7 +174,7 @@ function selectNewestFeedItems(items,limit=40){
   }).slice(0,cap);
 }
 async function getFeedDocument(url,options={}){
-  const r=await fetch(url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/3.0.4 RSS reader", "Accept":"application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9"}});
+  const r=await fetch(url,{headers:{"User-Agent":"PhenyxProMarketIntelligence/3.0.5 RSS reader", "Accept":"application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9"}});
   if(!r.ok)throw Error(`Feed HTTP ${r.status}`);
   const maxBytes=5*1024*1024;
   if(Number(r.headers.get('content-length')||0)>maxBytes)throw Error('Feed exceeds 5 MiB safety limit');
@@ -454,7 +454,7 @@ async function adminV3Routes(req,env,u){
   return j({error:"V3 admin route not found"},404);
 }
 
-async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:VERSION,translationEnabled:false,contentLanguage:"en-original",features:{brandWatchlist:true,sourceRegistry:true,retailDataAuthorizationGated:true,redditStatus:"pending_authorization",openMediaExpansion:true,podcastAudioFetch:false,intelligenceQuality:true},time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
+async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:CORS});if(u.pathname==="/health")return j({ok:true,service:"phenyxpro-intel-feed",version:VERSION,translationEnabled:false,contentLanguage:"en-original",features:{brandWatchlist:true,sourceRegistry:true,retailDataAuthorizationGated:true,redditStatus:"pending_authorization",openMediaExpansion:true,podcastAudioFetch:false,intelligenceQuality:true,podcastExcludedFromBriefingByDefault:true},time:new Date().toISOString()});if(u.pathname==="/api/briefing.json"&&req.method==="GET"){
   if(!auth(req,env))return j({error:"Unauthorized"},401);
   const raw=Number(u.searchParams.get('min_score')??35);
   const min=Number.isFinite(raw)?Math.min(Math.max(raw,0),100):35;
@@ -463,11 +463,20 @@ async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS
   const requestedOffset=Number(u.searchParams.get('offset')||0);
   const offset=Number.isFinite(requestedOffset)?Math.min(Math.max(Math.floor(requestedOffset),0),1000000):0;
   const sort=u.searchParams.get('sort')==='date'?'date':'score';
+  // Market News is podcast-free by default. Podcast episodes remain available
+  // through the dedicated intelligence endpoints or explicit include_podcasts=1.
+  const includePodcasts=['1','true','yes'].includes(String(u.searchParams.get('include_podcasts')||'').toLowerCase());
+  const podcastExists='EXISTS (SELECT 1 FROM podcast_episodes p WHERE p.article_id=articles.id)';
+  const podcastFilter=includePodcasts?'':` AND NOT ${podcastExists}`;
   const orderBy=sort==='score'?'relevance_score DESC,published_at DESC,id':'published_at DESC,collected_at DESC,id';
   const r=await env.DB.prepare(`SELECT id,title,source_name,published_at,category,priority,brand,summary,analysis,confidence,content_type,sentiment,is_phenyx_mention,canonical_url,relevance_score,market_pillar,product_family,model,evidence,analysis_status,
-    EXISTS (SELECT 1 FROM podcast_episodes p WHERE p.article_id=articles.id) AS is_podcast
-    FROM articles WHERE relevance_score>=? ORDER BY ${orderBy} LIMIT ? OFFSET ?`).bind(min,limit,offset).all();
-  const counts=await env.DB.prepare('SELECT COUNT(*) AS total, SUM(CASE WHEN relevance_score>=? THEN 1 ELSE 0 END) AS matching FROM articles').bind(min).first();
+    ${podcastExists} AS is_podcast
+    FROM articles WHERE relevance_score>=? ${podcastFilter} ORDER BY ${orderBy} LIMIT ? OFFSET ?`).bind(min,limit,offset).all();
+  const counts=await env.DB.prepare(`SELECT COUNT(*) AS total_all,
+    SUM(CASE WHEN NOT ${podcastExists} THEN 1 ELSE 0 END) AS total_news,
+    SUM(CASE WHEN ${podcastExists} THEN 1 ELSE 0 END) AS total_podcast,
+    SUM(CASE WHEN relevance_score>=? AND (?=1 OR NOT ${podcastExists}) THEN 1 ELSE 0 END) AS matching
+    FROM articles`).bind(min,includePodcasts?1:0).first();
   const items=(r.results||[]).map(x=>({
     date:x.published_at?.slice(0,10)||'',category:x.category,priority:x.priority,title:x.title,
     brand:x.brand||x.source_name||'',summary:x.summary||'',analysis:x.analysis||'',source:x.canonical_url,
@@ -477,8 +486,10 @@ async function handle(req,env){const u=new URL(req.url);if(req.method==="OPTIONS
     evidence:x.evidence?JSON.parse(x.evidence):[],analysisStatus:x.analysis_status
   }));
   const totalMatching=counts?.matching||0;
+  const totalArticles=includePodcasts?(counts?.total_all||0):(counts?.total_news||0);
   return j({generatedAt:new Date().toISOString(),mode:'LIVE',version:VERSION,translationEnabled:false,contentLanguage:'en-original',minRelevanceScore:min,
-    totalArticles:counts?.total||0,totalMatching,returned:items.length,offset,limit,
+    totalArticles,totalAllArticles:counts?.total_all||0,totalPodcastEpisodes:counts?.total_podcast||0,
+    podcastsIncluded:includePodcasts,totalMatching,returned:items.length,offset,limit,
     hasMore:offset+items.length<totalMatching,nextOffset:offset+items.length,items});
 }
 if(u.pathname==='/api/admin/translate'&&req.method==='POST'){
